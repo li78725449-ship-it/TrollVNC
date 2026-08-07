@@ -8,6 +8,7 @@
 #import "TVNCServiceCoordinator.h"
 #import "Control.h"
 #import "TVNCUtil.h"
+#import "TVNCClientListController.h"
 #import <sys/socket.h>
 
 #import <CoreImage/CoreImage.h>
@@ -109,6 +110,7 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 @property(nonatomic, strong) UIView *statusDotView;
 @property(nonatomic, strong) UILabel *statusPillLabel;
 @property(nonatomic, strong) UILabel *clientsCountLabel;
+@property(nonatomic, strong) TVNCClientListController *clientsVC;
 @property(nonatomic, strong) NSUserDefaults *defaults;
 
 // 反向连接页
@@ -190,7 +192,6 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self updateStatusPill];
-    [self refreshClientCount];
 }
 
 #pragma mark - 右上角状态胶囊
@@ -251,7 +252,7 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 
     self.gatewayLabel = [[UILabel alloc] init];
     self.gatewayLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.gatewayLabel.font = [UIFont systemFontOfSize:13];
+    self.gatewayLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     self.gatewayLabel.textColor = [UIColor colorWithWhite:1 alpha:0.92];
 
     UIStackView *gatewayRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.statusDot, self.gatewayLabel]];
@@ -272,7 +273,7 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
         [gatewayRow.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-20],
         [self.statusDot.widthAnchor constraintEqualToConstant:8],
         [self.statusDot.heightAnchor constraintEqualToConstant:8],
-        [gatewayRow.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-20],
+        [gatewayRow.bottomAnchor constraintLessThanOrEqualToAnchor:card.bottomAnchor constant:-20],
     ]];
     return card;
 }
@@ -372,19 +373,29 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
     self.reverseIdLabel.hidden = !repeater;
     self.reverseIdField.hidden = !repeater;
 
-    // 拨号按钮
+    // 拨号按钮（带边框）
     self.reverseDialButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.reverseDialButton.translatesAutoresizingMaskIntoConstraints = NO;
     self.reverseDialButton.titleLabel.font = [UIFont boldSystemFontOfSize:15];
     [self.reverseDialButton setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
+    [self.reverseDialButton setTitleColor:[UIColor tertiaryLabelColor] forState:UIControlStateDisabled];
+    self.reverseDialButton.layer.cornerRadius = 10;
+    self.reverseDialButton.layer.borderWidth = 1;
+    self.reverseDialButton.layer.borderColor = [UIColor systemBlueColor].CGColor;
+    [self.reverseDialButton setContentEdgeInsets:UIEdgeInsetsMake(8, 40, 8, 40)];
     [self.reverseDialButton addTarget:self action:@selector(dialReverse:) forControlEvents:UIControlEventTouchUpInside];
     [card addSubview:self.reverseDialButton];
 
-    // 恢复直连
+    // 恢复直连（带边框）
     UIButton *restore = [UIButton buttonWithType:UIButtonTypeSystem];
     restore.translatesAutoresizingMaskIntoConstraints = NO;
     [restore setTitle:@"恢复直连" forState:UIControlStateNormal];
     restore.titleLabel.font = [UIFont systemFontOfSize:14];
+    [restore setTitleColor:[UIColor secondaryLabelColor] forState:UIControlStateNormal];
+    restore.layer.cornerRadius = 10;
+    restore.layer.borderWidth = 1;
+    restore.layer.borderColor = [UIColor separatorColor].CGColor;
+    [restore setContentEdgeInsets:UIEdgeInsetsMake(8, 30, 8, 30)];
     [restore addTarget:self action:@selector(restoreDirect:) forControlEvents:UIControlEventTouchUpInside];
     [card addSubview:restore];
 
@@ -484,9 +495,11 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
     if (reverseConfigured && running) {
         [self.reverseDialButton setTitle:@"已连接" forState:UIControlStateNormal];
         self.reverseDialButton.enabled = NO;
+        self.reverseDialButton.layer.borderColor = [UIColor systemGrayColor].CGColor;
     } else {
         [self.reverseDialButton setTitle:@"拨号" forState:UIControlStateNormal];
         self.reverseDialButton.enabled = YES;
+        self.reverseDialButton.layer.borderColor = [UIColor systemBlueColor].CGColor;
     }
 }
 
@@ -587,38 +600,76 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 
 - (UIView *)makeClientsCard {
     UIView *card = [self newCard];
-    UILabel *title = [self cardTitle:@"在线客户端"];
+    UILabel *title = [self cardTitle:@"客户端"];
     [card addSubview:title];
 
     self.clientsCountLabel = [[UILabel alloc] init];
     self.clientsCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.clientsCountLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
     self.clientsCountLabel.textColor = [UIColor secondaryLabelColor];
-    self.clientsCountLabel.text = @"0 台";
+    self.clientsCountLabel.text = @"在线 0 · 冻结 0";
     [card addSubview:self.clientsCountLabel];
 
-    UIButton *more = [UIButton buttonWithType:UIButtonTypeSystem];
-    more.translatesAutoresizingMaskIntoConstraints = NO;
-    [more setTitle:@"查看全部 ›" forState:UIControlStateNormal];
-    more.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-    [more addTarget:self action:@selector(openClients) forControlEvents:UIControlEventTouchUpInside];
-    [card addSubview:more];
+    UIButton *disconnectAll = [UIButton buttonWithType:UIButtonTypeSystem];
+    disconnectAll.translatesAutoresizingMaskIntoConstraints = NO;
+    [disconnectAll setTitle:@"断开全部" forState:UIControlStateNormal];
+    disconnectAll.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    [disconnectAll setTitleColor:[UIColor systemRedColor] forState:UIControlStateNormal];
+    [disconnectAll addTarget:self action:@selector(disconnectAllClients) forControlEvents:UIControlEventTouchUpInside];
+    [card addSubview:disconnectAll];
+
+    // 内嵌客户端列表（子控制器，卡片内直接显示与管理）
+    UIView *tableContainer = [[UIView alloc] init];
+    tableContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    tableContainer.layer.cornerRadius = 12;
+    tableContainer.clipsToBounds = YES;
+    [card addSubview:tableContainer];
+
+    TVNCClientListController *clientsVC = [[TVNCClientListController alloc] init];
+    NSBundle *resBundle = [NSBundle bundleWithPath:[[NSBundle mainBundle] pathForResource:@"TrollVNCPrefs"
+                                                                                   ofType:@"bundle"]];
+    clientsVC.bundle = resBundle ?: [NSBundle mainBundle];
+    clientsVC.primaryColor = [UIColor systemBlueColor];
+    clientsVC.embedded = YES;
+    __weak typeof(self) weakSelf = self;
+    clientsVC.onCountChange = ^(NSInteger online, NSInteger frozen) {
+        typeof(self) strongSelf = weakSelf;
+        if (strongSelf) {
+            strongSelf.clientsCountLabel.text =
+                [NSString stringWithFormat:@"在线 %ld · 冻结 %ld", (long)online, (long)frozen];
+        }
+    };
+    [self addChildViewController:clientsVC];
+    clientsVC.view.translatesAutoresizingMaskIntoConstraints = NO;
+    [tableContainer addSubview:clientsVC.view];
+    [clientsVC didMoveToParentViewController:self];
+    self.clientsVC = clientsVC;
 
     [NSLayoutConstraint activateConstraints:@[
         [title.topAnchor constraintEqualToAnchor:card.topAnchor constant:16],
         [title.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18],
         [self.clientsCountLabel.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
         [self.clientsCountLabel.leadingAnchor constraintEqualToAnchor:title.trailingAnchor constant:8],
-        [title.trailingAnchor constraintLessThanOrEqualToAnchor:more.leadingAnchor constant:-8],
-        [more.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
-        [more.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-14],
-        [more.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
+        [title.trailingAnchor constraintLessThanOrEqualToAnchor:disconnectAll.leadingAnchor constant:-8],
+        [disconnectAll.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+        [disconnectAll.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
+
+        [tableContainer.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:10],
+        [tableContainer.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:8],
+        [tableContainer.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-8],
+        [tableContainer.heightAnchor constraintEqualToConstant:260],
+        [tableContainer.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-8],
+
+        [clientsVC.view.topAnchor constraintEqualToAnchor:tableContainer.topAnchor],
+        [clientsVC.view.leadingAnchor constraintEqualToAnchor:tableContainer.leadingAnchor],
+        [clientsVC.view.trailingAnchor constraintEqualToAnchor:tableContainer.trailingAnchor],
+        [clientsVC.view.bottomAnchor constraintEqualToAnchor:tableContainer.bottomAnchor],
     ]];
     return card;
 }
 
-- (void)openClients {
-    self.tabBarController.selectedIndex = 1;
+- (void)disconnectAllClients {
+    [self.clientsVC disconnectAllClients];
 }
 
 #pragma mark - U3 操作
@@ -668,53 +719,6 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
         self.gatewayLabel.text = @"网关未配置（设置 → 网关）";
     }
     [self updateReverseDialUI];
-}
-
-#pragma mark - 在线客户端计数
-
-- (void)refreshClientCount {
-    __weak typeof(self) weakSelf = self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSInteger n = [self onlineClientCount];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            typeof(self) strongSelf = weakSelf;
-            if (strongSelf) strongSelf.clientsCountLabel.text = [NSString stringWithFormat:@"%ld 台", (long)n];
-        });
-    });
-}
-
-- (NSInteger)onlineClientCount {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return 0;
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_len = sizeof(addr);
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(kTvDefaultCtlPort);
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(fd); return 0; }
-    const char *cmd = "list\n";
-    if (send(fd, cmd, strlen(cmd), 0) < 0) { close(fd); return 0; }
-    NSMutableData *md = [NSMutableData data];
-    char buf[2048];
-    fd_set rfds;
-    for (;;) {
-        FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
-        struct timeval timeout = {0, 300000};
-        int sel = select(fd + 1, &rfds, NULL, NULL, &timeout);
-        if (sel <= 0) break;
-        ssize_t n = recv(fd, buf, sizeof(buf), 0);
-        if (n <= 0) break;
-        [md appendBytes:buf length:(NSUInteger)n];
-    }
-    close(fd);
-    NSString *tsv = [[NSString alloc] initWithData:md encoding:NSUTF8StringEncoding] ?: @"";
-    NSInteger count = 0;
-    for (NSString *ln in [tsv componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
-        if ([ln componentsSeparatedByString:@"\t"].count >= 5) count++;
-    }
-    return count;
 }
 
 #pragma mark - 卡片工厂

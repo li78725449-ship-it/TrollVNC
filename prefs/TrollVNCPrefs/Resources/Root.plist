@@ -26,22 +26,7 @@
 			<key>default</key>
 			<true/>
 		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSEditTextCell</string>
-			<key>defaults</key>
-			<string>com.82flex.trollvnc</string>
-			<key>key</key>
-			<string>DesktopName</string>
-			<key>label</key>
-			<string>Desktop Name</string>
-			<key>default</key>
-			<string>TrollVNC</string>
-			<key>placeholder</key>
-			<string>Shown to VNC clients</string>
-			<key>keyboard</key>
-			<string>alphabet</string>
-		</dict>
+		
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>

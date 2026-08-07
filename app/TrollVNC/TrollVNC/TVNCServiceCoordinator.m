@@ -19,6 +19,7 @@
 #import "TrollVNC-Swift.h"
 
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 #import <MobileCoreServices/LSApplicationProxy.h>
 #import <BackgroundTasks/BackgroundTasks.h>
 #import <arpa/inet.h>
@@ -90,6 +91,13 @@ int SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions(CFStringRef bundleI
     // 自然滚动方向默认开启（未显式设置过时写入，保证服务端真实生效）
     if ([_userDefaults objectForKey:@"NaturalScroll"] == nil) {
         [_userDefaults setBool:YES forKey:@"NaturalScroll"];
+        [_userDefaults synchronize];
+    }
+
+    // 设备名称统一使用“关于本机”的真实名称（设置项已移除，注册/VNC 桌面名/mDNS 保持一致）
+    NSString *realDeviceName = [[UIDevice currentDevice] name];
+    if (realDeviceName.length) {
+        [_userDefaults setObject:realDeviceName forKey:@"DesktopName"];
         [_userDefaults synchronize];
     }
 

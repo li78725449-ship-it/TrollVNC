@@ -33,6 +33,8 @@
 
 // Placeholder item id used when there are no clients
 static NSString *const kTVNCEmptyItemId = @"__empty__";
+static NSString *const kTVNCFrozenHostsKey = @"TVNCFrozenHosts";
+static NSString *const kTVNCDefaultsSuite = @"com.82flex.trollvnc";
 
 static inline BOOL TVNCIsEmptyItemId(NSString *_Nullable itemId) {
     return itemId != nil && [itemId isEqualToString:kTVNCEmptyItemId];
@@ -108,6 +110,7 @@ static int TVNCConnect(void) {
 
 @property(nonatomic, strong) UITableViewDiffableDataSource<NSString *, NSString *> *dataSource; // section -> itemId
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *clientLookup;     // id -> dict
+@property(nonatomic, strong) NSMutableSet<NSString *> *frozenHosts;                                   // 冻结 host 集合（持久化）
 
 // Subscription (long-lived connection)
 @property(nonatomic, assign) int subFd;
@@ -127,15 +130,23 @@ static int TVNCConnect(void) {
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    self.title = NSLocalizedStringFromTableInBundle(@"Clients", @"Localizable", self.bundle, nil);
+    if (self.embedded) {
+        // 嵌入卡片：隐藏导航/下拉刷新，透明背景融入卡片
+        self.tableView.backgroundColor = [UIColor clearColor];
+        self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
+        self.tableView.alwaysBounceVertical = NO;
+        self.tableView.scrollEnabled = YES;
+    } else {
+        self.title = NSLocalizedStringFromTableInBundle(@"Clients", @"Localizable", self.bundle, nil);
 
-    UIRefreshControl *refreshControl = [UIRefreshControl new];
-    [refreshControl addTarget:self action:@selector(refresh) forControlEvents:UIControlEventValueChanged];
-    self.refreshControl = refreshControl;
+        UIRefreshControl *refreshControl = [UIRefreshControl new];
+        [refreshControl addTarget:self action:@selector(refresh) forControlEvents:UIControlEventValueChanged];
+        self.refreshControl = refreshControl;
 
-    // 对齐 mockup：右上角「全部断开」（嵌入 Tab，无 dismiss 语义）
-    self.navigationItem.leftBarButtonItem = nil;
-    self.navigationItem.rightBarButtonItem = self.disconnectItem;
+        // 对齐 mockup：右上角「全部断开」（嵌入 Tab，无 dismiss 语义）
+        self.navigationItem.leftBarButtonItem = nil;
+        self.navigationItem.rightBarButtonItem = self.disconnectItem;
+    }
 
     // Diffable data source
     self.clientLookup = [NSMutableDictionary new];
@@ -368,6 +379,67 @@ static int TVNCConnect(void) {
     });
 }
 
+#pragma mark - 冻结 / 解冻
+
+- (NSUserDefaults *)frozenDefaults {
+    return [[NSUserDefaults alloc] initWithSuiteName:kTVNCDefaultsSuite];
+}
+
+- (NSMutableSet<NSString *> *)frozenHosts {
+    if (!_frozenHosts) {
+        NSArray *arr = [[self frozenDefaults] arrayForKey:kTVNCFrozenHostsKey] ?: @[];
+        _frozenHosts = [NSMutableSet setWithArray:arr];
+    }
+    return _frozenHosts;
+}
+
+- (void)persistFrozenHosts {
+    [[self frozenDefaults] setObject:[self.frozenHosts allObjects] forKey:kTVNCFrozenHostsKey];
+    [[self frozenDefaults] synchronize];
+}
+
+- (BOOL)isHostFrozen:(NSString *)host {
+    if (!host.length)
+        return NO;
+    return [self.frozenHosts containsObject:host];
+}
+
+- (void)freezeClientWithId:(NSString *)cid {
+    if (cid.length == 0)
+        return;
+    NSDictionary *c = self.clientLookup[cid];
+    NSString *host = c[@"host"] ?: @"";
+    if (host.length) {
+        [self.frozenHosts addObject:host];
+        [self persistFrozenHosts];
+    }
+    // block = 断开 + 服务器临时黑名单（本机记录保证离线仍显示灰色）
+    [self disconnectClientWithId:cid block:YES];
+}
+
+- (void)unfreezeHost:(NSString *)host {
+    if (!host.length)
+        return;
+    [self.frozenHosts removeObject:host];
+    [self persistFrozenHosts];
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        int fd = TVNCConnect();
+        if (fd >= 0) {
+            TVNCSendLine(fd, [NSString stringWithFormat:@"unblock %@", host]);
+            (void)TVNCReadAll(fd, 2.0);
+            close(fd);
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self refresh];
+        });
+    });
+}
+
+- (void)disconnectAllClients {
+    [self disconnectAll];
+}
+
 #pragma mark - Helpers (Cells)
 
 - (UITableViewCell *)cellForTableView:(UITableView *)tableView
@@ -399,10 +471,24 @@ static int TVNCConnect(void) {
         cell = [[TVNCClientCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"TVNCClientCell"];
         cell.bundle = self.bundle;
     }
+    cell.backgroundColor = [UIColor clearColor];
 
     NSDictionary *c = self.clientLookup[identifier] ?: @{};
     NSString *cid = c[@"id"] ?: identifier ?: @"";
     NSString *host = c[@"host"] ?: @"";
+    BOOL frozen = [[c objectForKey:@"frozen"] boolValue] || [self isHostFrozen:host];
+
+    if (frozen) {
+        // 冻结行：灰色，主行显示 host，副行提示解冻
+        [cell configureWithId:host host:@"已冻结" viewOnly:NO subtitle:@"冻结中 · 右滑解冻" primaryColor:nil];
+        cell.idLabel.textColor = [UIColor secondaryLabelColor];
+        cell.hostLabel.textColor = [UIColor systemOrangeColor];
+        cell.subtitleLabel.textColor = [UIColor tertiaryLabelColor];
+        cell.accessoryType = UITableViewCellAccessoryNone;
+        cell.alpha = 0.85;
+        return cell;
+    }
+
     BOOL vo = [[c objectForKey:@"viewOnly"] boolValue] || [[c objectForKey:@"viewOnly"] isEqual:@"1"];
     double dur = [[c objectForKey:@"durationSec"] doubleValue];
 
@@ -420,6 +506,7 @@ static int TVNCConnect(void) {
 
     [cell configureWithId:cid host:host viewOnly:vo subtitle:subtitle primaryColor:self.primaryColor];
     cell.accessoryType = UITableViewCellAccessoryNone;
+    cell.alpha = 1.0;
     return cell;
 }
 
@@ -457,12 +544,25 @@ static int TVNCConnect(void) {
     [self.clientLookup removeAllObjects];
 
     NSMutableArray<NSString *> *ids = [NSMutableArray arrayWithCapacity:rows.count];
+    NSMutableSet<NSString *> *seenHosts = [NSMutableSet set];
     for (NSDictionary *item in rows) {
         NSString *cid = item[@"id"] ?: @"";
         if (!cid.length)
             continue;
         self.clientLookup[cid] = item;
         [ids addObject:cid];
+        NSString *host = item[@"host"] ?: @"";
+        if (host.length)
+            [seenHosts addObject:host];
+    }
+
+    // 合并冻结客户端：断开/离线后仍显示，灰色
+    for (NSString *host in [[self.frozenHosts allObjects] sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)]) {
+        if ([seenHosts containsObject:host])
+            continue; // 已在线（如服务重启后黑名单清空），行内按 host 判定冻结样式
+        NSString *fid = [@"frozen:" stringByAppendingString:host];
+        self.clientLookup[fid] = @{ @"id" : fid, @"host" : host, @"frozen" : @YES };
+        [ids addObject:fid];
     }
 
     NSDiffableDataSourceSnapshot<NSString *, NSString *> *snap = [NSDiffableDataSourceSnapshot new];
@@ -476,6 +576,10 @@ static int TVNCConnect(void) {
 
     [self.dataSource applySnapshot:snap animatingDifferences:YES];
     [self.disconnectItem setEnabled:(ids.count > 0)];
+
+    if (self.onCountChange) {
+        self.onCountChange((NSInteger)rows.count, (NSInteger)self.frozenHosts.count);
+    }
 }
 
 - (void)reloadDataFromServer {
@@ -526,28 +630,49 @@ static int TVNCConnect(void) {
 
 // Diffable data source drives cells; no need to implement UITableViewDataSource methods here.
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView
-    trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
+    leadingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
 
     NSString *itemId = [self.dataSource itemIdentifierForIndexPath:indexPath];
     if ([itemId isEqualToString:kTVNCEmptyItemId])
         return nil;
 
     __weak typeof(self) weakSelf = self;
+    NSDictionary *c = self.clientLookup[itemId] ?: @{};
+    NSString *host = c[@"host"] ?: @"";
+    BOOL frozen = [[c objectForKey:@"frozen"] boolValue] || [self isHostFrozen:host];
 
-    UIContextualAction *block = [UIContextualAction
+    if (frozen) {
+        // 冻结行：仅「解冻」
+        UIContextualAction *unfreeze = [UIContextualAction
+            contextualActionWithStyle:UIContextualActionStyleNormal
+                                title:@"解冻"
+                              handler:^(__kindof UIContextualAction *action, __kindof UIView *sourceView,
+                                        void (^completionHandler)(BOOL)) {
+                                  NSString *h = weakSelf.clientLookup[itemId][@"host"] ?: @"";
+                                  [weakSelf unfreezeHost:h];
+                                  if (completionHandler)
+                                      completionHandler(YES);
+                              }];
+        unfreeze.backgroundColor = [UIColor systemBlueColor];
+        UISwipeActionsConfiguration *cfg = [UISwipeActionsConfiguration configurationWithActions:@[ unfreeze ]];
+        cfg.performsFirstActionWithFullSwipe = NO;
+        return cfg;
+    }
+
+    UIContextualAction *freeze = [UIContextualAction
         contextualActionWithStyle:UIContextualActionStyleDestructive
-                            title:NSLocalizedStringFromTableInBundle(@"Block", @"Localizable", self.bundle, nil)
+                            title:@"冻结"
                           handler:^(__kindof UIContextualAction *action, __kindof UIView *sourceView,
                                     void (^completionHandler)(BOOL)) {
                               NSString *cid = [weakSelf.dataSource itemIdentifierForIndexPath:indexPath] ?: @"";
-                              [weakSelf disconnectClientWithId:cid block:YES];
+                              [weakSelf freezeClientWithId:cid];
                               if (completionHandler)
                                   completionHandler(YES);
                           }];
 
     UIContextualAction *kick = [UIContextualAction
         contextualActionWithStyle:UIContextualActionStyleNormal
-                            title:NSLocalizedStringFromTableInBundle(@"Disconnect", @"Localizable", self.bundle, nil)
+                            title:@"断开"
                           handler:^(__kindof UIContextualAction *action, __kindof UIView *sourceView,
                                     void (^completionHandler)(BOOL)) {
                               NSString *cid = [weakSelf.dataSource itemIdentifierForIndexPath:indexPath] ?: @"";
@@ -556,7 +681,7 @@ static int TVNCConnect(void) {
                                   completionHandler(YES);
                           }];
 
-    UISwipeActionsConfiguration *config = [UISwipeActionsConfiguration configurationWithActions:@[ block, kick ]];
+    UISwipeActionsConfiguration *config = [UISwipeActionsConfiguration configurationWithActions:@[ freeze, kick ]];
     config.performsFirstActionWithFullSwipe = NO;
     return config;
 }
@@ -583,20 +708,11 @@ static int TVNCConnect(void) {
         return nil;
 
     NSString *host = self.clientLookup[cid][@"host"] ?: @"";
+    BOOL frozen = [cid hasPrefix:@"frozen:"] || [self isHostFrozen:host];
     return [UIContextMenuConfiguration
         configurationWithIdentifier:nil
                     previewProvider:nil
                      actionProvider:^UIMenu *_Nullable(NSArray<UIMenuElement *> *_Nonnull suggestedActions) {
-                         UIAction *copyId = [UIAction
-                             actionWithTitle:NSLocalizedStringFromTableInBundle(@"Copy ID", @"Localizable", self.bundle,
-                                                                                nil)
-                                       image:[UIImage systemImageNamed:@"doc.on.doc"]
-                                  identifier:nil
-                                     handler:^(__kindof UIAction *_Nonnull action) {
-                                         [UIPasteboard generalPasteboard].string = cid;
-                                         UINotificationFeedbackGenerator *gen = [UINotificationFeedbackGenerator new];
-                                         [gen notificationOccurred:UINotificationFeedbackTypeSuccess];
-                                     }];
                          UIAction *copyHost = [UIAction
                              actionWithTitle:NSLocalizedStringFromTableInBundle(@"Copy Host", @"Localizable",
                                                                                 self.bundle, nil)
@@ -607,9 +723,30 @@ static int TVNCConnect(void) {
                                          UINotificationFeedbackGenerator *gen = [UINotificationFeedbackGenerator new];
                                          [gen notificationOccurred:UINotificationFeedbackTypeSuccess];
                                      }];
+
+                         if (frozen) {
+                             UIAction *unfreeze = [UIAction
+                                 actionWithTitle:@"解冻"
+                                           image:[UIImage systemImageNamed:@"snowflake"]
+                                      identifier:nil
+                                         handler:^(__kindof UIAction *_Nonnull action) {
+                                             [self unfreezeHost:host];
+                                         }];
+                             return [UIMenu menuWithTitle:@"" children:@[ copyHost, unfreeze ]];
+                         }
+
+                         UIAction *copyId = [UIAction
+                             actionWithTitle:NSLocalizedStringFromTableInBundle(@"Copy ID", @"Localizable", self.bundle,
+                                                                                nil)
+                                       image:[UIImage systemImageNamed:@"doc.on.doc"]
+                                  identifier:nil
+                                     handler:^(__kindof UIAction *_Nonnull action) {
+                                         [UIPasteboard generalPasteboard].string = cid;
+                                         UINotificationFeedbackGenerator *gen = [UINotificationFeedbackGenerator new];
+                                         [gen notificationOccurred:UINotificationFeedbackTypeSuccess];
+                                     }];
                          UIAction *disconnect = [UIAction
-                             actionWithTitle:NSLocalizedStringFromTableInBundle(@"Disconnect Client", @"Localizable",
-                                                                                self.bundle, nil)
+                             actionWithTitle:@"断开"
                                        image:[UIImage systemImageNamed:@"xmark.circle"]
                                   identifier:nil
                                      handler:^(__kindof UIAction *_Nonnull action) {
@@ -617,17 +754,16 @@ static int TVNCConnect(void) {
                                      }];
                          disconnect.attributes = UIMenuElementAttributesDestructive;
 
-                         UIAction *block = [UIAction
-                             actionWithTitle:NSLocalizedStringFromTableInBundle(@"Block Client", @"Localizable",
-                                                                                self.bundle, nil)
-                                       image:[UIImage systemImageNamed:@"hand.raised.fill"]
+                         UIAction *freeze = [UIAction
+                             actionWithTitle:@"冻结"
+                                       image:[UIImage systemImageNamed:@"snowflake"]
                                   identifier:nil
                                      handler:^(__kindof UIAction *_Nonnull action) {
-                                         [self disconnectClientWithId:cid block:YES];
+                                         [self freezeClientWithId:cid];
                                      }];
-                         block.attributes = UIMenuElementAttributesDestructive;
+                         freeze.attributes = UIMenuElementAttributesDestructive;
 
-                         return [UIMenu menuWithTitle:@"" children:@[ copyId, copyHost, disconnect, block ]];
+                         return [UIMenu menuWithTitle:@"" children:@[ copyId, copyHost, disconnect, freeze ]];
                      }];
 }
 

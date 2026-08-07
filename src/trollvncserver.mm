@@ -3912,6 +3912,21 @@ void tvCtlHandleConnection(int cfd, struct sockaddr_in caddr) {
         tvCtlRemoveSubscriber(cfd, NO);
         const char *ok = "OK\n";
         resp = [NSData dataWithBytes:ok length:strlen(ok)];
+    } else if ([cmd hasPrefix:@"unblock "]) {
+        // 解冻：从临时黑名单移除 host（配合 App 端“解冻”操作）
+        NSArray *ubParts = [cmd componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        NSString *ubHost = ubParts.count >= 2 ? ubParts[1] : @"";
+        BOOL ubRemoved = NO;
+        if (ubHost.length && gBlockedHosts) {
+            @synchronized(gBlockedHosts) {
+                if ([gBlockedHosts containsObject:ubHost]) {
+                    [gBlockedHosts removeObject:ubHost];
+                    ubRemoved = YES;
+                }
+            }
+        }
+        const char *ubRaw = ubRemoved ? "OK\n" : "NOT_FOUND\n";
+        resp = [NSData dataWithBytes:ubRaw length:strlen(ubRaw)];
     } else if ([cmd hasPrefix:@"disconnect "] || [cmd hasPrefix:@"kick "] || [cmd hasPrefix:@"block "]) {
         NSArray *parts = [cmd componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         NSString *cid = parts.count >= 2 ? parts[1] : @"";

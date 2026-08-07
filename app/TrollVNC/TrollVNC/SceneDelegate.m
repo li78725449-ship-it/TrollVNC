@@ -16,7 +16,6 @@
 */
 
 #import "SceneDelegate.h"
-#import "TVNCClientListController.h"
 #import "TVNCConnectViewController.h"
 #import "TVNCControllerViewController.h"
 #import "TVNCSettingsViewController.h"
@@ -57,33 +56,21 @@
                                                           image:[UIImage systemImageNamed:@"antenna.radiowaves.left.and.right"]
                                                             tag:0];
 
-    // Tab 2 客户端（复用现有客户端列表）
-    NSBundle *resBundle = [NSBundle bundleWithPath:[[NSBundle mainBundle] pathForResource:@"TrollVNCPrefs"
-                                                                                   ofType:@"bundle"]];
-    TVNCClientListController *clients = [[TVNCClientListController alloc] init];
-    clients.bundle = resBundle ?: [NSBundle mainBundle];
-    clients.primaryColor = [UIColor systemBlueColor];
-    clients.hideDismissButton = YES;
-    UINavigationController *clientsNav = [[UINavigationController alloc] initWithRootViewController:clients];
-    clientsNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"客户端"
-                                                          image:[UIImage systemImageNamed:@"iphone"]
-                                                            tag:1];
-
-    // Tab 3 控制端（U2 外壳；viewer 为 U4 远期）
+    // Tab 2 控制端（U2 外壳；viewer 为 U4 远期；客户端管理已内嵌连接页）
     TVNCControllerViewController *controller = [[TVNCControllerViewController alloc] init];
     UINavigationController *controllerNav = [[UINavigationController alloc] initWithRootViewController:controller];
     controllerNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"控制端"
                                                              image:[UIImage systemImageNamed:@"rectangle.grid.2x2"]
-                                                               tag:2];
+                                                               tag:1];
 
-    // Tab 4 设置（U2.1：8 分组 UIKit 设置）
+    // Tab 3 设置（U2.1：8 分组 UIKit 设置）
     TVNCSettingsViewController *settings = [[TVNCSettingsViewController alloc] init];
     UINavigationController *settingsNav = [[UINavigationController alloc] initWithRootViewController:settings];
     settingsNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"设置"
                                                            image:[UIImage systemImageNamed:@"gearshape"]
-                                                             tag:3];
+                                                             tag:2];
 
-    tab.viewControllers = @[ connectNav, clientsNav, controllerNav, settingsNav ];
+    tab.viewControllers = @[ connectNav, controllerNav, settingsNav ];
     self.window.rootViewController = tab;
     [self.window makeKeyAndVisible];
 }
