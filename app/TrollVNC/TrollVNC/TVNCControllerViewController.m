@@ -126,10 +126,12 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
 
 #pragma mark - 控制端
 
-@interface TVNCControllerViewController () <UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDelegateFlowLayout>
+@interface TVNCControllerViewController () <UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDelegateFlowLayout, UIGestureRecognizerDelegate>
 
 @property(nonatomic, strong) NSMutableArray<UIButton *> *chips;
 @property(nonatomic, strong) UIButton *layoutBtn;
+@property(nonatomic, strong) UIView *layoutPanel;
+@property(nonatomic, strong) NSMutableArray<UIButton *> *layoutButtons;
 @property(nonatomic, strong) UICollectionView *collectionView;
 @property(nonatomic, strong) UILabel *emptyLabel;
 @property(nonatomic, strong) NSMutableArray<NSDictionary *> *devices; // 全部设备
@@ -204,7 +206,7 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
     self.layoutBtn.layer.borderWidth = 1;
     self.layoutBtn.layer.borderColor = [UIColor separatorColor].CGColor;
     self.layoutBtn.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
-    [self setupLayoutMenu];
+    [self.layoutBtn addTarget:self action:@selector(layoutTapped:) forControlEvents:UIControlEventTouchUpInside];
 
     UIStackView *topRow = [[UIStackView alloc] init];
     topRow.translatesAutoresizingMaskIntoConstraints = NO;
@@ -269,25 +271,122 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
 
 #pragma mark - 布局菜单
 
-- (void)setupLayoutMenu {
+- (void)setupLayoutPanel {
     __weak typeof(self) weakSelf = self;
+
+    self.layoutPanel = [[UIView alloc] init];
+    self.layoutPanel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.layoutPanel.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+    self.layoutPanel.layer.cornerRadius = 14;
+    self.layoutPanel.layer.borderWidth = 1;
+    self.layoutPanel.layer.borderColor = [UIColor separatorColor].CGColor;
+    self.layoutPanel.layer.shadowColor = [UIColor blackColor].CGColor;
+    self.layoutPanel.layer.shadowOpacity = 0.15;
+    self.layoutPanel.layer.shadowOffset = CGSizeMake(0, 8);
+    self.layoutPanel.layer.shadowRadius = 16;
+    self.layoutPanel.hidden = YES;
+    [self.view addSubview:self.layoutPanel];
+
     NSArray<NSString *> *names = @[
         @"横屏 1", @"横屏 2", @"横屏 3", @"横屏 4", @"横屏 5", @"横屏 6",
         @"竖屏 1", @"竖屏 2", @"竖屏 3", @"竖屏 4", @"竖屏 5", @"竖屏 6",
     ];
-    NSMutableArray<UIAction *> *children = [NSMutableArray array];
+    self.layoutButtons = [NSMutableArray array];
+    UIStackView *left = [[UIStackView alloc] init];
+    left.translatesAutoresizingMaskIntoConstraints = NO;
+    left.axis = UILayoutConstraintAxisVertical;
+    left.spacing = 6;
+    UIStackView *right = [[UIStackView alloc] init];
+    right.translatesAutoresizingMaskIntoConstraints = NO;
+    right.axis = UILayoutConstraintAxisVertical;
+    right.spacing = 6;
+
     for (NSInteger i = 0; i < 12; i++) {
-        UIAction *a = [UIAction actionWithTitle:names[i]
-                                          image:nil
-                                     identifier:nil
-                                        handler:^(__kindof UIAction *action) {
-                                            [weakSelf setLayoutIndex:i];
-                                        }];
-        a.state = (i == self.layoutIndex) ? UIMenuElementStateOn : UIMenuElementStateOff;
-        [children addObject:a];
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+        b.translatesAutoresizingMaskIntoConstraints = NO;
+        [b setTitle:names[i] forState:UIControlStateNormal];
+        b.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        b.layer.cornerRadius = 8;
+        b.tag = (int)i;
+        [b addTarget:self action:@selector(layoutOptionTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [b setContentEdgeInsets:UIEdgeInsetsMake(7, 10, 7, 10)];
+        [self.layoutButtons addObject:b];
+        [b.heightAnchor constraintEqualToConstant:32].active = YES;
+        if (i < 6) {
+            [left addArrangedSubview:b];
+        } else {
+            [right addArrangedSubview:b];
+        }
     }
-    self.layoutBtn.menu = [UIMenu menuWithTitle:@"布局" children:children];
-    self.layoutBtn.showsMenuAsPrimaryAction = YES;
+    [self.layoutPanel addSubview:left];
+    [self.layoutPanel addSubview:right];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [self.layoutPanel.trailingAnchor constraintEqualToAnchor:self.layoutBtn.trailingAnchor],
+        [self.layoutPanel.topAnchor constraintEqualToAnchor:self.layoutBtn.bottomAnchor constant:8],
+        [left.topAnchor constraintEqualToAnchor:self.layoutPanel.topAnchor constant:10],
+        [left.leadingAnchor constraintEqualToAnchor:self.layoutPanel.leadingAnchor constant:10],
+        [left.bottomAnchor constraintEqualToAnchor:self.layoutPanel.bottomAnchor constant:-10],
+        [left.widthAnchor constraintEqualToConstant:92],
+        [right.topAnchor constraintEqualToAnchor:self.layoutPanel.topAnchor constant:10],
+        [right.leadingAnchor constraintEqualToAnchor:left.trailingAnchor constant:6],
+        [right.trailingAnchor constraintEqualToAnchor:self.layoutPanel.trailingAnchor constant:-10],
+        [right.bottomAnchor constraintEqualToAnchor:self.layoutPanel.bottomAnchor constant:-10],
+        [right.widthAnchor constraintEqualToAnchor:left.widthAnchor],
+    ]];
+
+    [self refreshLayoutPanelChecks];
+
+    // 点击面板外关闭
+    UITapGestureRecognizer *dismiss = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissLayoutPanel)];
+    dismiss.cancelsTouchesInView = NO;
+    dismiss.delegate = self;
+    [self.view addGestureRecognizer:dismiss];
+}
+
+- (void)layoutTapped:(UIButton *)sender {
+    BOOL show = self.layoutPanel.hidden;
+    if (show) {
+        [self refreshLayoutPanelChecks];
+    }
+    self.layoutPanel.hidden = !show;
+}
+
+- (void)layoutOptionTapped:(UIButton *)sender {
+    [self setLayoutIndex:sender.tag];
+    self.layoutPanel.hidden = YES;
+}
+
+- (void)dismissLayoutPanel {
+    self.layoutPanel.hidden = YES;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    if (touch.view == self.layoutPanel || [touch.view isDescendantOfView:self.layoutPanel]) {
+        return NO; // 面板内不拦截
+    }
+    if (touch.view == self.layoutBtn || [touch.view isDescendantOfView:self.layoutBtn]) {
+        return NO; // 布局按钮自身（切换开关）
+    }
+    return YES;
+}
+
+- (void)refreshLayoutPanelChecks {
+    for (UIButton *b in self.layoutButtons) {
+        BOOL on = (b.tag == self.layoutIndex);
+        b.selected = on;
+        if (on) {
+            b.backgroundColor = [UIColor systemBlueColor];
+            b.tintColor = [UIColor whiteColor];
+            [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            [b setImage:[UIImage systemImageNamed:@"checkmark"] forState:UIControlStateNormal];
+        } else {
+            b.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+            b.tintColor = [UIColor labelColor];
+            [b setTitleColor:[UIColor labelColor] forState:UIControlStateNormal];
+            [b setImage:nil forState:UIControlStateNormal];
+        }
+    }
 }
 
 - (void)setLayoutIndex:(NSInteger)index {
@@ -295,17 +394,7 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
     self.layoutIndex = index;
     [self.defaults setInteger:index forKey:kLayoutKey];
     [self.defaults synchronize];
-    // 延迟到下一 RunLoop 再重建菜单，避免在菜单动作回调中修改 button.menu 触发 UIKit 崩溃
-    __weak typeof(self) weakSelf = self;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        typeof(self) strongSelf = weakSelf;
-        if (!strongSelf) return;
-        @try {
-            [strongSelf setupLayoutMenu]; // 刷新选中对勾
-        } @catch (NSException *e) {
-            NSLog(@"[TVNC] layout menu rebuild failed: %@ %@", e.name, e.reason);
-        }
-    });
+    [self refreshLayoutPanelChecks];
     @try {
         [self.collectionView.collectionViewLayout invalidateLayout];
     } @catch (NSException *e) {
