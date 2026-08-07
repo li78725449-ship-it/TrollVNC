@@ -8,6 +8,7 @@
 */
 #import "TRGatewayClient.h"
 #import "Logging.h"
+#import <UIKit/UIKit.h>
 
 #import <arpa/inet.h>
 #import <netdb.h>
