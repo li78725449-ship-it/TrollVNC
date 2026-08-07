@@ -59,7 +59,8 @@ static void TVNCViewerFinishedUpdate(rfbClient *client) {
 @property(nonatomic, strong) UIImageView *screenView;
 @property(nonatomic, strong) UIActivityIndicatorView *spinner;
 @property(nonatomic, strong) UILabel *statusLabel;
-@property(nonatomic, strong) UIStackView *opsBar;
+@property(nonatomic, strong) UIButton *gearBtn;   // 悬浮 ⚙（可拖动）
+@property(nonatomic, assign) BOOL gearPlaced;
 
 @property(nonatomic, assign) BOOL connected;
 @property(nonatomic, assign) BOOL stopRequested;
@@ -80,6 +81,7 @@ static void TVNCViewerFinishedUpdate(rfbClient *client) {
         _port = port;
         _deviceName = [name copy] ?: [host copy];
         _pendingEvents = [NSMutableArray array];
+        self.hidesBottomBarWhenPushed = YES; // 全屏：隐藏底部 Tab
     }
     return self;
 }
@@ -87,7 +89,6 @@ static void TVNCViewerFinishedUpdate(rfbClient *client) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor blackColor];
-    self.title = self.deviceName;
 
     self.screenView = [[UIImageView alloc] init];
     self.screenView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -109,26 +110,45 @@ static void TVNCViewerFinishedUpdate(rfbClient *client) {
     self.statusLabel.text = [NSString stringWithFormat:@"连接 %@:%d …", self.host, self.port];
     [self.view addSubview:self.statusLabel];
 
-    [self setupOpsBar];
+    [self setupGearButton];
     [self setupGestures];
 
     [NSLayoutConstraint activateConstraints:@[
-        [self.screenView.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
+        // 全屏画面（隐藏导航/Tab 后占满）
+        [self.screenView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
         [self.screenView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [self.screenView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [self.screenView.bottomAnchor constraintEqualToAnchor:self.opsBar.topAnchor],
+        [self.screenView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
         [self.spinner.centerXAnchor constraintEqualToAnchor:self.screenView.centerXAnchor],
         [self.spinner.centerYAnchor constraintEqualToAnchor:self.screenView.centerYAnchor],
         [self.statusLabel.centerXAnchor constraintEqualToAnchor:self.screenView.centerXAnchor],
         [self.statusLabel.topAnchor constraintEqualToAnchor:self.spinner.bottomAnchor constant:12],
     ]];
 
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemStop
-                                                                                           target:self
-                                                                                           action:@selector(stopAndExit)];
-
     self.rfbThread = [[NSThread alloc] initWithTarget:self selector:@selector(rfbLoop) object:nil];
     [self.rfbThread start];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self.navigationController setNavigationBarHidden:YES animated:animated];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    if (!self.gearPlaced) {
+        self.gearPlaced = YES;
+        CGFloat s = self.gearBtn.bounds.size.width;
+        CGRect f = self.gearBtn.frame;
+        f.origin.x = self.view.bounds.size.width - s - 16;
+        f.origin.y = self.view.bounds.size.height - s - 56;
+        self.gearBtn.frame = f;
+    }
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [self.navigationController setNavigationBarHidden:NO animated:animated];
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
@@ -140,52 +160,102 @@ static void TVNCViewerFinishedUpdate(rfbClient *client) {
     self.stopRequested = YES;
 }
 
-#pragma mark - 操作条
+#pragma mark - 悬浮 ⚙（可拖动 + 竖排菜单）
 
-- (void)setupOpsBar {
-    self.opsBar = [[UIStackView alloc] init];
-    self.opsBar.translatesAutoresizingMaskIntoConstraints = NO;
-    self.opsBar.axis = UILayoutConstraintAxisHorizontal;
-    self.opsBar.spacing = 10;
-    self.opsBar.distribution = UIStackViewDistributionFillEqually;
-    [self.view addSubview:self.opsBar];
+- (void)setupGearButton {
+    CGFloat s = 52;
+    self.gearBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    [self.gearBtn setImage:[UIImage systemImageNamed:@"gearshape.fill"] forState:UIControlStateNormal];
+    self.gearBtn.tintColor = [UIColor whiteColor];
+    self.gearBtn.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.85];
+    self.gearBtn.layer.cornerRadius = s / 2;
+    self.gearBtn.layer.borderWidth = 1;
+    self.gearBtn.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.25].CGColor;
+    self.gearBtn.frame = CGRectMake(self.view.bounds.size.width - s - 16, self.view.bounds.size.height - s - 56, s, s);
+    [self.view addSubview:self.gearBtn];
 
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragGear:)];
+    [self.gearBtn addGestureRecognizer:pan];
+
+    __weak typeof(self) weakSelf = self;
     NSArray<NSArray *> *ops = @[
-        @[ @"home", @"Home" ],
-        @[ @"power", @"电源" ],
-        @[ @"volup", @"音量+" ],
-        @[ @"voldn", @"音量−" ],
+        @[ @"home", @"Home", @"house.fill" ],
+        @[ @"power", @"电源", @"power" ],
+        @[ @"volup", @"音量+", @"speaker.wave.2.fill" ],
+        @[ @"voldn", @"音量−", @"speaker.wave.1.fill" ],
+        @[ @"mute", @"静音", @"speaker.slash.fill" ],
+        @[ @"briup", @"亮度+", @"sun.max.fill" ],
+        @[ @"bridn", @"亮度−", @"sun.min.fill" ],
+        @[ @"keyboard", @"键盘", @"keyboard" ],
+        @[ @"clipboard", @"剪贴板", @"doc.on.clipboard.fill" ],
     ];
+    NSMutableArray<UIMenuElement *> *children = [NSMutableArray array];
     for (NSArray *op in ops) {
-        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-        [b setTitle:op[1] forState:UIControlStateNormal];
-        b.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1];
-        b.layer.cornerRadius = 10;
-        b.tag = [self tagForOp:op[0]];
-        [b addTarget:self action:@selector(opTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [self.opsBar addArrangedSubview:b];
+        NSInteger tag = [self tagForOp:op[0]];
+        UIAction *a = [UIAction actionWithTitle:op[1]
+                                          image:[UIImage systemImageNamed:op[2]]
+                                     identifier:nil
+                                        handler:^(__kindof UIAction *action) {
+                                            [weakSelf menuOpTapped:tag];
+                                        }];
+        [children addObject:a];
     }
-    [NSLayoutConstraint activateConstraints:@[
-        [self.opsBar.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:12],
-        [self.opsBar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-12],
-        [self.opsBar.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-8],
-        [self.opsBar.heightAnchor constraintEqualToConstant:44],
-    ]];
+    UIAction *end = [UIAction actionWithTitle:@"结束控制"
+                                        image:[UIImage systemImageNamed:@"xmark.circle.fill"]
+                                   identifier:nil
+                                      handler:^(__kindof UIAction *action) {
+                                          [weakSelf stopAndExit];
+                                      }];
+    end.attributes = UIMenuElementAttributesDestructive;
+    [children addObject:end];
+
+    self.gearBtn.menu = [UIMenu menuWithTitle:@"控制" children:children];
+    self.gearBtn.showsMenuAsPrimaryAction = YES;
 }
+
+- (void)dragGear:(UIPanGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateChanged || g.state == UIGestureRecognizerStateEnded) {
+        CGPoint t = [g translationInView:self.view];
+        CGPoint c = self.gearBtn.center;
+        c.x += t.x;
+        c.y += t.y;
+        CGFloat s = self.gearBtn.bounds.size.width;
+        CGFloat top = s / 2 + self.view.safeAreaInsets.top;
+        CGFloat bottom = self.view.bounds.size.height - s / 2 - self.view.safeAreaInsets.bottom;
+        c.x = MAX(s / 2, MIN(self.view.bounds.size.width - s / 2, c.x));
+        c.y = MAX(top, MIN(bottom, c.y));
+        self.gearBtn.center = c;
+        [g setTranslation:CGPointZero inView:self.view];
+    }
+}
+
+- (void)menuOpTapped:(NSInteger)tag {
+    if (tag == 8) { // 键盘
+        [self keyboardTapped];
+        return;
+    }
+    if (tag == 9) { // 剪贴板
+        [self clipboardTapped];
+        return;
+    }
+    __weak typeof(self) weakSelf = self;
+    [self enqueueRFBEvent:^(rfbClient *c) {
+        [weakSelf performOp:tag client:c];
+    }];
+}
+
+#pragma mark - 操作映射
 
 - (NSInteger)tagForOp:(NSString *)op {
     if ([op isEqualToString:@"home"]) return 1;
     if ([op isEqualToString:@"power"]) return 2;
     if ([op isEqualToString:@"volup"]) return 3;
-    return 4; // voldn
-}
-
-- (void)opTapped:(UIButton *)sender {
-    NSInteger tag = sender.tag;
-    __weak typeof(self) weakSelf = self;
-    [self enqueueRFBEvent:^(rfbClient *c) {
-        [weakSelf performOp:tag client:c];
-    }];
+    if ([op isEqualToString:@"voldn"]) return 4;
+    if ([op isEqualToString:@"mute"]) return 5;
+    if ([op isEqualToString:@"briup"]) return 6;
+    if ([op isEqualToString:@"bridn"]) return 7;
+    if ([op isEqualToString:@"keyboard"]) return 8;
+    return 9; // clipboard
 }
 
 - (void)performOp:(NSInteger)op client:(rfbClient *)c {
@@ -194,7 +264,66 @@ static void TVNCViewerFinishedUpdate(rfbClient *client) {
         case 2: SendPointerEvent(c, 1, 1, 2); SendPointerEvent(c, 1, 1, 0); break;             // 电源（中键）
         case 3: SendKeyEvent(c, 0x1008ff13, TRUE); SendKeyEvent(c, 0x1008ff13, FALSE); break;  // 音量+
         case 4: SendKeyEvent(c, 0x1008ff11, TRUE); SendKeyEvent(c, 0x1008ff11, FALSE); break;  // 音量−
+        case 5: SendKeyEvent(c, 0x1008ff12, TRUE); SendKeyEvent(c, 0x1008ff12, FALSE); break;  // 静音
+        case 6: SendKeyEvent(c, 0x1008ff03, TRUE); SendKeyEvent(c, 0x1008ff03, FALSE); break;  // 亮度+
+        case 7: SendKeyEvent(c, 0x1008ff05, TRUE); SendKeyEvent(c, 0x1008ff05, FALSE); break;  // 亮度−
     }
+}
+
+- (void)keyboardTapped {
+    if (!self.connected) return;
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"发送按键文本"
+                                                               message:@"将文本作为按键发送到设备"
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"输入要发送的文本";
+        tf.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) weakSelf = self;
+    [a addAction:[UIAlertAction actionWithTitle:@"发送" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        NSString *text = a.textFields.firstObject.text ?: @"";
+        [weakSelf sendText:text];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)sendText:(NSString *)text {
+    if (!text.length) return;
+    __weak typeof(self) weakSelf = self;
+    [self enqueueRFBEvent:^(rfbClient *c) {
+        for (NSUInteger i = 0; i < text.length; i++) {
+            unichar ch = [text characterAtIndex:i];
+            if (ch < 0x20 || ch > 0x7E) continue; // v1 仅 ASCII 可见字符
+            SendKeyEvent(c, (uint32_t)ch, TRUE);
+            SendKeyEvent(c, (uint32_t)ch, FALSE);
+        }
+    }];
+}
+
+- (void)clipboardTapped {
+    if (!self.connected) return;
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"写入设备剪贴板"
+                                                               message:nil
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"粘贴要写入设备的内容";
+    }];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) weakSelf = self;
+    [a addAction:[UIAlertAction actionWithTitle:@"写入" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        NSString *text = a.textFields.firstObject.text ?: @"";
+        [weakSelf sendClipboard:text];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)sendClipboard:(NSString *)text {
+    __weak typeof(self) weakSelf = self;
+    [self enqueueRFBEvent:^(rfbClient *c) {
+        const char *utf8 = text.UTF8String ?: "";
+        SendClientCutTextUTF8(c, (char *)utf8, (int)strlen(utf8));
+    }];
 }
 
 #pragma mark - 手势

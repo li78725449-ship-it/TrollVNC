@@ -20,16 +20,122 @@
 
 static NSString *const kDefaultsSuite = @"com.82flex.trollvnc";
 static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
+static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横屏1..6, 竖屏1..6
 
-@interface TVNCControllerViewController () <UITableViewDataSource, UITableViewDelegate>
+#pragma mark - 设备卡片 Cell（v1 占位画面）
+
+@interface TVNCDeviceCardCell : UICollectionViewCell
+@property(nonatomic, strong) UIView *screenArea;
+@property(nonatomic, strong) UIImageView *screenIcon;
+@property(nonatomic, strong) UILabel *tagLabel;
+@property(nonatomic, strong) UILabel *nameLabel;
+@property(nonatomic, strong) UIView *dotView;
+- (void)configureWithDevice:(NSDictionary *)d;
+@end
+
+@implementation TVNCDeviceCardCell
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.contentView.layer.cornerRadius = 16;
+        self.contentView.layer.borderWidth = 1;
+        self.contentView.layer.borderColor = [UIColor separatorColor].CGColor;
+        self.contentView.clipsToBounds = YES;
+        self.contentView.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+        self.layer.shadowColor = [UIColor blackColor].CGColor;
+        self.layer.shadowOpacity = 0.08;
+        self.layer.shadowOffset = CGSizeMake(0, 6);
+        self.layer.shadowRadius = 12;
+
+        _screenArea = [[UIView alloc] init];
+        _screenArea.translatesAutoresizingMaskIntoConstraints = NO;
+        _screenArea.backgroundColor = [UIColor colorWithWhite:0.94 alpha:1];
+        [self.contentView addSubview:_screenArea];
+
+        _screenIcon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"iphone"]];
+        _screenIcon.translatesAutoresizingMaskIntoConstraints = NO;
+        _screenIcon.contentMode = UIViewContentModeScaleAspectFit;
+        _screenIcon.tintColor = [UIColor systemGrayColor];
+        [_screenArea addSubview:_screenIcon];
+
+        _tagLabel = [[UILabel alloc] init];
+        _tagLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        _tagLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightSemibold];
+        _tagLabel.textColor = [UIColor systemBlueColor];
+        _tagLabel.textAlignment = NSTextAlignmentCenter;
+        _tagLabel.layer.cornerRadius = 8;
+        _tagLabel.layer.borderWidth = 1;
+        _tagLabel.layer.borderColor = [UIColor systemBlueColor].CGColor;
+        _tagLabel.layer.masksToBounds = YES;
+        [self.contentView addSubview:_tagLabel];
+
+        _nameLabel = [[UILabel alloc] init];
+        _nameLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        _nameLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+        _nameLabel.textColor = [UIColor labelColor];
+        _nameLabel.numberOfLines = 1;
+        [self.contentView addSubview:_nameLabel];
+
+        _dotView = [[UIView alloc] init];
+        _dotView.translatesAutoresizingMaskIntoConstraints = NO;
+        _dotView.layer.cornerRadius = 5;
+        [self.contentView addSubview:_dotView];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [_screenArea.topAnchor constraintEqualToAnchor:self.contentView.topAnchor],
+            [_screenArea.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor],
+            [_screenArea.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor],
+            [_screenArea.bottomAnchor constraintEqualToAnchor:self.tagLabel.topAnchor constant:-10],
+
+            [_screenIcon.centerXAnchor constraintEqualToAnchor:_screenArea.centerXAnchor],
+            [_screenIcon.centerYAnchor constraintEqualToAnchor:_screenArea.centerYAnchor],
+            [_screenIcon.widthAnchor constraintEqualToConstant:34],
+            [_screenIcon.heightAnchor constraintEqualToConstant:40],
+
+            [_tagLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:10],
+            [_tagLabel.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-10],
+            [_tagLabel.widthAnchor constraintEqualToConstant:38],
+            [_tagLabel.heightAnchor constraintEqualToConstant:20],
+
+            [_dotView.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-10],
+            [_dotView.centerYAnchor constraintEqualToAnchor:_tagLabel.centerYAnchor],
+            [_dotView.widthAnchor constraintEqualToConstant:10],
+            [_dotView.heightAnchor constraintEqualToConstant:10],
+
+            [_nameLabel.leadingAnchor constraintEqualToAnchor:_tagLabel.trailingAnchor constant:8],
+            [_nameLabel.trailingAnchor constraintLessThanOrEqualToAnchor:_dotView.leadingAnchor constant:-8],
+            [_nameLabel.centerYAnchor constraintEqualToAnchor:_tagLabel.centerYAnchor],
+        ]];
+    }
+    return self;
+}
+
+- (void)configureWithDevice:(NSDictionary *)d {
+    BOOL online = [d[@"online"] boolValue];
+    self.nameLabel.text = d[@"name"] ?: d[@"id"] ?: @"?";
+    self.tagLabel.text = @"直连";
+    self.tagLabel.textColor = [UIColor systemBlueColor];
+    self.tagLabel.layer.borderColor = [UIColor systemBlueColor].CGColor;
+    self.dotView.backgroundColor = online ? [UIColor systemGreenColor] : [UIColor systemGrayColor];
+    self.screenArea.backgroundColor = [UIColor colorWithWhite:online ? 0.93 : 0.96 alpha:1];
+    self.screenIcon.tintColor = online ? [UIColor systemGrayColor] : [UIColor systemGray3Color];
+}
+
+@end
+
+#pragma mark - 控制端
+
+@interface TVNCControllerViewController () <UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDelegateFlowLayout>
 
 @property(nonatomic, strong) NSMutableArray<UIButton *> *chips;
 @property(nonatomic, strong) UIButton *layoutBtn;
-@property(nonatomic, strong) UITableView *tableView;
+@property(nonatomic, strong) UICollectionView *collectionView;
 @property(nonatomic, strong) UILabel *emptyLabel;
 @property(nonatomic, strong) NSMutableArray<NSDictionary *> *devices; // 全部设备
 @property(nonatomic, strong) NSMutableArray<NSDictionary *> *shown;   // 过滤后
 @property(nonatomic, assign) NSInteger filterIndex; // 0 全部 / 1 直连 / 2 中继
+@property(nonatomic, assign) NSInteger layoutIndex; // 0-11: 横屏1..6 / 竖屏1..6
 @property(nonatomic, strong) NSUserDefaults *defaults;
 
 @end
@@ -43,6 +149,9 @@ static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
         _devices = [NSMutableArray array];
         _shown = [NSMutableArray array];
         _filterIndex = 0;
+        NSInteger saved = [_defaults integerForKey:kLayoutKey];
+        if (saved < 0 || saved > 11) saved = 7; // 默认 竖屏2
+        _layoutIndex = saved;
     }
     return self;
 }
@@ -82,6 +191,7 @@ static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
     }
     [self updateChipAppearance];
 
+    // 布局选择器：图标按钮 + 下拉菜单（12 项带 ✓）
     self.layoutBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     self.layoutBtn.translatesAutoresizingMaskIntoConstraints = NO;
     [self.layoutBtn setImage:[UIImage systemImageNamed:@"square.grid.2x2"] forState:UIControlStateNormal];
@@ -90,7 +200,7 @@ static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
     self.layoutBtn.layer.borderWidth = 1;
     self.layoutBtn.layer.borderColor = [UIColor separatorColor].CGColor;
     self.layoutBtn.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
-    [self.layoutBtn addTarget:self action:@selector(layoutTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [self setupLayoutMenu];
 
     UIStackView *topRow = [[UIStackView alloc] init];
     topRow.translatesAutoresizingMaskIntoConstraints = NO;
@@ -100,12 +210,22 @@ static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
     [topRow addArrangedSubview:self.layoutBtn];
     [self.view addSubview:topRow];
 
-    self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
-    self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.tableView.dataSource = self;
-    self.tableView.delegate = self;
-    self.tableView.backgroundColor = [UIColor clearColor];
-    [self.view addSubview:self.tableView];
+    UICollectionViewFlowLayout *fl = [[UICollectionViewFlowLayout alloc] init];
+    fl.minimumInteritemSpacing = 12;
+    fl.minimumLineSpacing = 12;
+    fl.sectionInset = UIEdgeInsetsMake(12, 16, 16, 16);
+    self.collectionView = [[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:fl];
+    self.collectionView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.collectionView.dataSource = self;
+    self.collectionView.delegate = self;
+    self.collectionView.backgroundColor = [UIColor clearColor];
+    [self.collectionView registerClass:[TVNCDeviceCardCell class] forCellWithReuseIdentifier:@"card"];
+    [self.view addSubview:self.collectionView];
+
+    // 纯手动下拉刷新（无轮询）
+    UIRefreshControl *rc = [[UIRefreshControl alloc] init];
+    [rc addTarget:self action:@selector(refreshDevices) forControlEvents:UIControlEventValueChanged];
+    self.collectionView.refreshControl = rc;
 
     self.emptyLabel = [[UILabel alloc] init];
     self.emptyLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -113,7 +233,8 @@ static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;
     self.emptyLabel.font = [UIFont systemFontOfSize:14];
     self.emptyLabel.textColor = [UIColor secondaryLabelColor];
-    self.emptyLabel.text = @"暂无设备\n点右上角刷新，从网关拉取设备目录";
+    self.emptyLabel.text = @"暂无设备
+点右上角刷新，从网关拉取设备目录";
     [self.view addSubview:self.emptyLabel];
 
     [NSLayoutConstraint activateConstraints:@[
@@ -122,10 +243,10 @@ static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
         [topRow.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
         [self.layoutBtn.widthAnchor constraintEqualToConstant:36],
         [self.layoutBtn.heightAnchor constraintEqualToConstant:36],
-        [self.tableView.topAnchor constraintEqualToAnchor:topRow.bottomAnchor constant:8],
-        [self.tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
-        [self.tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [self.tableView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [self.collectionView.topAnchor constraintEqualToAnchor:topRow.bottomAnchor constant:4],
+        [self.collectionView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [self.collectionView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [self.collectionView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
         [self.emptyLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [self.emptyLabel.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
         [self.emptyLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:32],
@@ -143,12 +264,53 @@ static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
     [self refreshDevices];
 }
 
+#pragma mark - 布局菜单
+
+- (void)setupLayoutMenu {
+    __weak typeof(self) weakSelf = self;
+    NSArray<NSString *> *names = @[
+        @"横屏 1", @"横屏 2", @"横屏 3", @"横屏 4", @"横屏 5", @"横屏 6",
+        @"竖屏 1", @"竖屏 2", @"竖屏 3", @"竖屏 4", @"竖屏 5", @"竖屏 6",
+    ];
+    NSMutableArray<UIAction *> *children = [NSMutableArray array];
+    for (NSInteger i = 0; i < 12; i++) {
+        UIAction *a = [UIAction actionWithTitle:names[i]
+                                          image:nil
+                                     identifier:nil
+                                        handler:^(__kindof UIAction *action) {
+                                            [weakSelf setLayoutIndex:i];
+                                        }];
+        a.state = (i == self.layoutIndex) ? UIMenuElementStateOn : UIMenuElementStateOff;
+        [children addObject:a];
+    }
+    self.layoutBtn.menu = [UIMenu menuWithTitle:@"布局" children:children];
+    self.layoutBtn.showsMenuAsPrimaryAction = YES;
+}
+
+- (void)setLayoutIndex:(NSInteger)index {
+    self.layoutIndex = index;
+    [self.defaults setInteger:index forKey:kLayoutKey];
+    [self.defaults synchronize];
+    [self setupLayoutMenu]; // 刷新选中对勾
+    [self.collectionView.collectionViewLayout invalidateLayout];
+}
+
+- (NSInteger)layoutColumns {
+    return (self.layoutIndex < 6) ? (self.layoutIndex + 1) : (self.layoutIndex - 5);
+}
+
+- (BOOL)layoutIsLandscape {
+    return self.layoutIndex < 6;
+}
+
 #pragma mark - 设备目录（网关 /api/devices）
 
 - (void)refreshDevices {
+    [self.collectionView.refreshControl endRefreshing];
     NSString *host = [self.defaults stringForKey:@"GatewayHost"];
     if (!host.length) {
-        self.emptyLabel.text = @"未配置网关\n请先在 设置 → 网关 填写网关地址";
+        self.emptyLabel.text = @"未配置网关
+请先在 设置 → 网关 填写网关地址";
         [self applyFilter];
         return;
     }
@@ -179,9 +341,12 @@ static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
 }
 
 - (void)handleDevices:(NSArray *)list error:(NSError *)err {
+    [self.collectionView.refreshControl endRefreshing];
     if (![list isKindOfClass:[NSArray class]]) {
-        self.emptyLabel.text = err ? [NSString stringWithFormat:@"拉取设备目录失败\n%@", err.localizedDescription]
-                                   : @"网关返回异常\n请检查网关是否运行";
+        self.emptyLabel.text = err ? [NSString stringWithFormat:@"拉取设备目录失败
+%@", err.localizedDescription]
+                                   : @"网关返回异常
+请检查网关是否运行";
     } else {
         [self.devices removeAllObjects];
         for (NSDictionary *d in list) {
@@ -191,7 +356,8 @@ static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
             }
         }
         if (!self.devices.count) {
-            self.emptyLabel.text = @"暂无设备\n（仅显示已注册到网关的设备）";
+            self.emptyLabel.text = @"暂无设备
+（仅显示已注册到网关的设备）";
         }
     }
     [self applyFilter];
@@ -206,38 +372,43 @@ static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
     }
     BOOL hasAny = self.devices.count > 0;
     BOOL hasShown = self.shown.count > 0;
-    self.tableView.hidden = !hasShown;
+    self.collectionView.hidden = !hasShown;
     self.emptyLabel.hidden = hasShown || !hasAny;
     if (!hasShown && hasAny) {
         self.emptyLabel.text = @"当前过滤条件下无设备";
         self.emptyLabel.hidden = NO;
     }
-    [self.tableView reloadData];
+    [self.collectionView reloadData];
 }
 
-#pragma mark - 表格
+#pragma mark - 卡片墙
 
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     return self.shown.count;
 }
 
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)ip {
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"dev"];
-    if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"dev"];
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-    }
-    NSDictionary *d = self.shown[ip.row];
-    BOOL online = [d[@"online"] boolValue];
-    cell.textLabel.text = d[@"name"] ?: d[@"id"];
-    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@:%@%@", d[@"host"] ?: @"?", d[@"port"] ?: @"5901", online ? @"" : @" · 离线"];
-    cell.imageView.image = [UIImage systemImageNamed:online ? @"circle.fill" : @"circle"];
-    cell.imageView.tintColor = online ? [UIColor systemGreenColor] : [UIColor systemGrayColor];
+- (__kindof UICollectionViewCell *)collectionView:(UICollectionView *)collectionView
+                           cellForItemAtIndexPath:(NSIndexPath *)ip {
+    TVNCDeviceCardCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"card" forIndexPath:ip];
+    [cell configureWithDevice:self.shown[ip.row]];
     return cell;
 }
 
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    [tableView deselectRowAtIndexPath:ip animated:YES];
+- (CGSize)collectionView:(UICollectionView *)collectionView
+                  layout:(UICollectionViewLayout *)collectionViewLayout
+  sizeForItemAtIndexPath:(NSIndexPath *)ip {
+    NSInteger cols = [self layoutColumns];
+    CGFloat total = collectionView.bounds.size.width;
+    if (total <= 0) total = self.view.bounds.size.width;
+    CGFloat spacing = 12;
+    CGFloat insets = 16 * 2 + spacing * (cols - 1);
+    CGFloat w = (total - insets) / cols;
+    CGFloat ratio = [self layoutIsLandscape] ? (9.0 / 16.0) : (16.0 / 9.0);
+    return CGSizeMake(w, floor(w * ratio));
+}
+
+- (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)ip {
+    [collectionView deselectItemAtIndexPath:ip animated:YES];
     NSDictionary *d = self.shown[ip.row];
     NSString *host = d[@"host"];
     if (!host.length) return;
@@ -271,20 +442,6 @@ static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
         }
         b.configuration = cfg;
     }
-}
-
-#pragma mark - 布局（v1 提示）
-
-- (void)layoutTapped:(UIButton *)sender {
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"布局"
-                                                                  message:@"布局（横屏 N / 竖屏 N）将在后续版本生效"
-                                                           preferredStyle:UIAlertControllerStyleActionSheet];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    if (sheet.popoverPresentationController) {
-        sheet.popoverPresentationController.sourceView = sender;
-        sheet.popoverPresentationController.sourceRect = sender.bounds;
-    }
-    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 @end
