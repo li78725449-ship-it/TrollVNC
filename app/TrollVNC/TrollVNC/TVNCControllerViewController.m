@@ -149,9 +149,13 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
         _devices = [NSMutableArray array];
         _shown = [NSMutableArray array];
         _filterIndex = 0;
-        NSInteger saved = [_defaults integerForKey:kLayoutKey];
-        if (saved < 0 || saved > 11) saved = 7; // 默认 竖屏2
-        _layoutIndex = saved;
+        id savedObj = [_defaults objectForKey:kLayoutKey];
+        if (savedObj == nil) {
+            _layoutIndex = 7; // 默认 竖屏2
+        } else {
+            NSInteger saved = [_defaults integerForKey:kLayoutKey];
+            _layoutIndex = (saved < 0 || saved > 11) ? 7 : saved;
+        }
     }
     return self;
 }
@@ -287,11 +291,26 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
 }
 
 - (void)setLayoutIndex:(NSInteger)index {
+    if (index < 0 || index > 11) index = 7;
     self.layoutIndex = index;
     [self.defaults setInteger:index forKey:kLayoutKey];
     [self.defaults synchronize];
-    [self setupLayoutMenu]; // 刷新选中对勾
-    [self.collectionView.collectionViewLayout invalidateLayout];
+    // 延迟到下一 RunLoop 再重建菜单，避免在菜单动作回调中修改 button.menu 触发 UIKit 崩溃
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        typeof(self) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        @try {
+            [strongSelf setupLayoutMenu]; // 刷新选中对勾
+        } @catch (NSException *e) {
+            NSLog(@"[TVNC] layout menu rebuild failed: %@ %@", e.name, e.reason);
+        }
+    });
+    @try {
+        [self.collectionView.collectionViewLayout invalidateLayout];
+    } @catch (NSException *e) {
+        NSLog(@"[TVNC] layout invalidate failed: %@ %@", e.name, e.reason);
+    }
 }
 
 - (NSInteger)layoutColumns {
@@ -392,12 +411,14 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
 - (CGSize)collectionView:(UICollectionView *)collectionView
                   layout:(UICollectionViewLayout *)collectionViewLayout
   sizeForItemAtIndexPath:(NSIndexPath *)ip {
-    NSInteger cols = [self layoutColumns];
+    NSInteger cols = MAX(1, [self layoutColumns]);
     CGFloat total = collectionView.bounds.size.width;
     if (total <= 0) total = self.view.bounds.size.width;
+    if (total <= 0) total = 320;
     CGFloat spacing = 12;
     CGFloat insets = 16 * 2 + spacing * (cols - 1);
     CGFloat w = (total - insets) / cols;
+    if (w < 60) w = 60;
     CGFloat ratio = [self layoutIsLandscape] ? (9.0 / 16.0) : (16.0 / 9.0);
     return CGSizeMake(w, floor(w * ratio));
 }
