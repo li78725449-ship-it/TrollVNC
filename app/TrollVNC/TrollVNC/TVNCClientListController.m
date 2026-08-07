@@ -463,9 +463,13 @@ static int TVNCConnect(void) {
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         cell.textLabel.textAlignment = NSTextAlignmentCenter;
         cell.textLabel.textColor = [UIColor secondaryLabelColor];
+        cell.textLabel.font = [UIFont systemFontOfSize:14];
         cell.textLabel.numberOfLines = 0;
+        cell.backgroundColor = [UIColor clearColor];
+        cell.contentView.backgroundColor = [UIColor clearColor];
+        cell.backgroundView = nil;
     }
-    cell.textLabel.text = NSLocalizedStringFromTableInBundle(@"No clients connected", @"Localizable", self.bundle, nil);
+    cell.textLabel.text = @"暂无客户端连接";
     return cell;
 }
 
@@ -707,6 +711,16 @@ static int TVNCConnect(void) {
     UISwipeActionsConfiguration *config = [UISwipeActionsConfiguration configurationWithActions:@[ freeze, kick ]];
     config.performsFirstActionWithFullSwipe = NO;
     return config;
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (self.dataSource) {
+        NSString *itemId = [self.dataSource itemIdentifierForIndexPath:indexPath];
+        if ([itemId isEqualToString:kTVNCEmptyItemId]) {
+            return 180;
+        }
+    }
+    return UITableViewAutomaticDimension;
 }
 
 - (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath {

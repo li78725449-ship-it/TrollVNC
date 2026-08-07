@@ -21,6 +21,7 @@
 @interface TVNCSettingsViewController ()
 
 @property(nonatomic, strong) NSArray<NSDictionary *> *pages;
+@property(nonatomic, strong) TVNCSettingFormController *actionController;
 
 @end
 
@@ -161,20 +162,8 @@
             },
         ],
     };
-    NSDictionary *general = @{
-        @"title" : @"通用",
-        @"subtitle" : @"日志 · 重置",
-        @"sections" : @[
-            @{
-                @"title" : @"通用",
-                @"rows" : @[
-                    @{@"type" : @"button", @"label" : @"查看日志", @"action" : @"viewLogs"},
-                    @{@"type" : @"button", @"label" : @"重置默认设置", @"action" : @"resetDefaults"},
-                ],
-            },
-        ],
-    };
-    return @[ gateway, direct, security, display, input, notify, advanced, general ];
+    // 查看日志 / 重置默认设置 直接放在设置一级菜单（见下方 section 1 动作行）
+    return @[ gateway, direct, security, display, input, notify, advanced ];
 }
 
 + (NSString *)appVersion {
@@ -188,32 +177,64 @@
 #pragma mark - 表格
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 1;
+    return 2;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return self.pages.count;
+    return (section == 0) ? self.pages.count : 2;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)ip {
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"pg"];
+    UITableViewCell *cell;
+    if (ip.section == 0) {
+        cell = [tableView dequeueReusableCellWithIdentifier:@"pg"];
+        if (!cell) {
+            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"pg"];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        }
+        NSDictionary *page = self.pages[ip.row];
+        cell.textLabel.text = page[@"title"];
+        cell.detailTextLabel.text = page[@"subtitle"];
+        NSArray<NSString *> *icons = @[ @"network", @"wifi", @"lock.shield", @"display", @"keyboard", @"bell.badge", @"wrench.and.screwdriver" ];
+        if (ip.row < icons.count) {
+            cell.imageView.image = [UIImage systemImageNamed:icons[ip.row]];
+            cell.imageView.tintColor = [UIColor systemBlueColor];
+        }
+        return cell;
+    }
+
+    // 一级菜单动作行：查看日志 / 重置默认设置
+    cell = [tableView dequeueReusableCellWithIdentifier:@"act"];
     if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"pg"];
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"act"];
+        cell.accessoryType = UITableViewCellAccessoryNone;
     }
-    NSDictionary *page = self.pages[ip.row];
-    cell.textLabel.text = page[@"title"];
-    cell.detailTextLabel.text = page[@"subtitle"];
-    NSArray<NSString *> *icons = @[ @"network", @"wifi", @"lock.shield", @"display", @"keyboard", @"bell.badge", @"wrench.and.screwdriver", @"list.bullet.rectangle" ];
-    if (ip.row < icons.count) {
-        cell.imageView.image = [UIImage systemImageNamed:icons[ip.row]];
-        cell.imageView.tintColor = [UIColor systemBlueColor];
-    }
+    NSArray<NSString *> *actions = @[ @"查看日志", @"重置默认设置" ];
+    cell.textLabel.text = actions[ip.row];
+    cell.textLabel.textColor = [UIColor systemBlueColor];
+    cell.imageView.image = [UIImage systemImageNamed:(ip.row == 0) ? @"doc.text" : @"arrow.counterclockwise"];
+    cell.imageView.tintColor = [UIColor systemBlueColor];
     return cell;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    return (section == 1) ? @"通用" : nil;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tableView deselectRowAtIndexPath:ip animated:YES];
+    if (ip.section == 1) {
+        // 一级动作
+        if (!self.actionController) {
+            self.actionController = [[TVNCSettingFormController alloc] initWithGroups:@[] title:@""];
+        }
+        if (ip.row == 0) {
+            [self.actionController viewLogs];
+        } else {
+            [self.actionController resetDefaults];
+        }
+        return;
+    }
     NSDictionary *page = self.pages[ip.row];
     TVNCSettingFormController *form = [[TVNCSettingFormController alloc] initWithGroups:page[@"sections"]
                                                                                   title:page[@"title"]];
