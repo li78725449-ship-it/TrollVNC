@@ -27,7 +27,6 @@
 #import <netinet/in.h>
 #import <sys/socket.h>
 #import <dlfcn.h>
-#import <notify.h>
 
 #import "Control.h"
 
@@ -44,7 +43,7 @@ int SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions(CFStringRef bundleI
 @interface TVNCServiceCoordinator ()
 @property(nonatomic, strong) NSTimer *checkTimer;
 @property(nonatomic, strong) NSTimer *restartTimer;
-@property(nonatomic, assign) int32_t prefsNotifyToken;
+@property(nonatomic, strong) id prefsObserver;
 @property(nonatomic, strong) NSUserDefaults *userDefaults;
 @end
 
@@ -163,15 +162,19 @@ NSString *TVNCDeviceUDID(void) {
 #pragma mark - 设置变更自动生效（HttpPort/Port 等需重启服务重新加载）
 
 - (void)registerPrefsWatcher {
-    if (self.prefsNotifyToken != 0) return;
+    if (self.prefsObserver) return;
     __weak typeof(self) weakSelf = self;
-    notify_register_dispatch(TVNC_NOTIFY_PREFS_CHANGED, &_prefsNotifyToken, dispatch_get_main_queue(), ^(int token) {
-        (void)token;
-        typeof(self) strongSelf = weakSelf;
-        if (strongSelf) {
-            [strongSelf prefsChanged];
-        }
-    });
+    self.prefsObserver = [[NSNotificationCenter defaultCenter]
+        addObserverForName:NSUserDefaultsDidChangeNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *note) {
+                    (void)note;
+                    typeof(self) strongSelf = weakSelf;
+                    if (strongSelf) {
+                        [strongSelf prefsChanged];
+                    }
+                }];
 }
 
 - (void)prefsChanged {
