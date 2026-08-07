@@ -20,4 +20,6 @@ else
 TrollVNC_CODESIGN_FLAGS += -STrollVNC/TrollVNC.entitlements
 endif
 
+TrollVNC_XCODEFLAGS += OTHER_LDFLAGS="-framework BackgroundTasks"
+
 include $(THEOS_MAKE_PATH)/xcodeproj.mk

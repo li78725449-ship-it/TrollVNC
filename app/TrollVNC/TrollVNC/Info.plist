@@ -32,5 +32,9 @@
 	<array>
 		<string>network-authentication</string>
 	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.82flex.trollvnc.refresh</string>
+	</array>
 </dict>
 </plist>

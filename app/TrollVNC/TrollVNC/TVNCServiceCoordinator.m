@@ -20,6 +20,7 @@
 
 #import <Foundation/Foundation.h>
 #import <MobileCoreServices/LSApplicationProxy.h>
+#import <BackgroundTasks/BackgroundTasks.h>
 #import <arpa/inet.h>
 #import <netinet/in.h>
 #import <sys/socket.h>
@@ -27,6 +28,8 @@
 #import "Control.h"
 
 NSNotificationName const TVNCServiceStatusDidChangeNotification = @"TVNCServiceStatusDidChangeNotification";
+
+static NSString *const kTVNCBGRefreshIdentifier = @"com.82flex.trollvnc.refresh";
 
 FOUNDATION_EXPORT NSString *const SBSApplicationLaunchOptionUnlockDeviceKey;
 FOUNDATION_EXPORT
@@ -103,10 +106,48 @@ int SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions(CFStringRef bundleI
                                                  selector:@selector(checkTimerFired:)
                                                  userInfo:nil
                                                   repeats:YES];
+    [self registerBackgroundTasks];
 }
 
 - (BOOL)isServiceRunning {
     return _serviceRunning;
+}
+
+#pragma mark - Background Refresh (BGTaskScheduler, 延长锁屏存活)
+
+- (void)registerBackgroundTasks {
+    if (@available(iOS 13.0, *)) {
+        [[BGTaskScheduler sharedScheduler] registerForTaskWithIdentifier:kTVNCBGRefreshIdentifier
+                                                             usingQueue:nil
+                                                          launchHandler:^(BGTask *task) {
+            [self handleBGRefreshTask:(BGAppRefreshTask *)task];
+        }];
+        [self scheduleBGRefresh];
+    }
+}
+
+- (void)scheduleBGRefresh {
+    if (@available(iOS 13.0, *)) {
+        BGAppRefreshTaskRequest *request =
+            [[BGAppRefreshTaskRequest alloc] initWithIdentifier:kTVNCBGRefreshIdentifier];
+        request.earliestBeginDate = [NSDate dateWithTimeIntervalSinceNow:15 * 60];
+        NSError *error = nil;
+        [[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error];
+    }
+}
+
+- (void)handleBGRefreshTask:(BGAppRefreshTask *)task {
+    // iOS 唤醒本 App 的窗口内：确保 manager（含注册/心跳客户端）存活，掉线即重新拉起
+    [self ensureServiceRunning];
+
+    __weak typeof(self) weakSelf = self;
+    task.expirationHandler = ^{
+        [task setTaskCompletedWithSuccess:NO];
+    };
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [task setTaskCompletedWithSuccess:YES];
+        [weakSelf scheduleBGRefresh];
+    });
 }
 
 #pragma mark - Private Methods
