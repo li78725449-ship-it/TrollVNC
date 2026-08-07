@@ -78,6 +78,9 @@ add_str SslKeyFile             "${TVNC_SSL_KEY_FILE:-}"
 # Reverse
 add_str ReverseMode            "${TVNC_REVERSE_MODE:-}"
 add_str ReverseSocket          "${TVNC_REVERSE_SOCKET:-}"
+# Gateway (internal farm registration)
+add_str GatewayHost            "${TVNC_GATEWAY_HOST:-}"
+add_str GatewayToken           "${TVNC_GATEWAY_TOKEN:-}"
 # Auth passwords
 add_str FullPassword           "${TVNC_FULL_PASSWORD:-}"
 add_str ViewOnlyPassword       "${TVNC_VIEWONLY_PASSWORD:-}"
@@ -91,6 +94,7 @@ add_int TileSize                       "${TVNC_TILE_SIZE:-}"
 add_int FullscreenThresholdPercent     "${TVNC_FULLSCREEN_THRESHOLD_PERCENT:-}"
 add_int MaxRects                       "${TVNC_MAX_RECTS:-}"
 add_int HttpPort                       "${TVNC_HTTP_PORT:-}"
+add_int GatewayPort                     "${TVNC_GATEWAY_PORT:-}"
 add_int ReverseRepeaterID              "${TVNC_REVERSE_REPEATER_ID:-}"
 
 # Reals (optional)

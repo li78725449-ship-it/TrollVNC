@@ -136,6 +136,10 @@ jobs:
           # Optional secrets (empty when not defined)
           TVNC_FULL_PASSWORD: ${{ secrets.TVNC_FULL_PASSWORD }}
           TVNC_VIEWONLY_PASSWORD: ${{ secrets.TVNC_VIEWONLY_PASSWORD }}
+          # Gateway pre-seed (internal farm; set in repo secrets to skip the in-app init page)
+          TVNC_GATEWAY_HOST: ${{ secrets.TVNC_GATEWAY_HOST }}
+          TVNC_GATEWAY_PORT: ${{ secrets.TVNC_GATEWAY_PORT }}
+          TVNC_GATEWAY_TOKEN: ${{ secrets.TVNC_GATEWAY_TOKEN }}
         run: |
           bash devkit/gen-managed-plist.sh
 
