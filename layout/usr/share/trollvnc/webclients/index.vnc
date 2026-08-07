@@ -6,6 +6,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<link rel="icon" href="data:," />
 <title>TrollVNC</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
@@ -80,7 +81,19 @@
 </div>
 <script type="module">
 import RFB from './novnc/core/rfb.js';
-import { DEFAULT_CAPS, CAP_META } from './caps.js';
+// caps.js 通过动态导入加载（失败不影响连接）；内置默认集作为回退
+var DEFAULT_CAPS = ['home', 'power', 'volup', 'voldn', 'mute', 'briup', 'bridn', 'keyboard', 'clipboard'];
+var CAP_META = {
+  home:      { op: 'home',      label: 'Home',      icon: '🏠', title: 'Home 键' },
+  power:     { op: 'power',     label: '电源',      icon: '⏻',    title: '电源' },
+  volup:     { op: 'volup',     label: '音量 +',    icon: '🔊', title: '音量 +' },
+  voldn:     { op: 'voldn',     label: '音量 −',    icon: '🔉', title: '音量 −' },
+  mute:      { op: 'mute',      label: '静音',      icon: '🔇', title: '静音' },
+  briup:     { op: 'briup',     label: '亮度 +',    icon: '☀️', title: '亮度 +' },
+  bridn:     { op: 'bridn',     label: '亮度 −',    icon: '🌙', title: '亮度 −' },
+  keyboard:  { op: 'kb',        label: '键盘',      icon: '⌨️', title: '键盘' },
+  clipboard: { op: 'clip',      label: '剪贴板',    icon: '📋', title: '粘贴剪贴板' },
+};
 (function () {
   var host = location.hostname;
   var port = $PORT;
@@ -184,6 +197,12 @@ import { DEFAULT_CAPS, CAP_META } from './caps.js';
   }
   renderCapOps(document.getElementById('barCaps'));
   renderCapOps(document.getElementById('opsCaps'));
+  import('./caps.js').then(function (m) {
+    if (m && m.DEFAULT_CAPS) DEFAULT_CAPS = m.DEFAULT_CAPS;
+    if (m && m.CAP_META) CAP_META = m.CAP_META;
+    renderCapOps(document.getElementById('barCaps'));
+    renderCapOps(document.getElementById('opsCaps'));
+  }).catch(function () { /* caps.js 缺失不影响连接 */ });
   function bind(sel) {
     document.querySelectorAll(sel).forEach(function (b) {
       b.addEventListener('click', function () { doOp(b.dataset.op); });
