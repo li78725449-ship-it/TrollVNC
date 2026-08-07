@@ -89,13 +89,23 @@ import { DEFAULT_CAPS, CAP_META } from './caps.js';
 
   var screen = document.getElementById('screen');
   var hint = document.getElementById('hint');
+  var validPort = /^[0-9]+$/.test(String(port)) && port > 0 && port < 65536;
+  if (!validPort) {
+    hint.textContent = '端口异常：$PORT 未替换（期望 VNC 端口，如 5901）';
+  } else {
+    hint.textContent = '连接中 ' + url;
+  }
   var rfb = new RFB(screen, url, {});
   rfb.scaleViewport = true;
   rfb.resizeSession = false;
   rfb.showDotCursor = true;
 
-  rfb.addEventListener('connect', function () { hint.textContent = '已连接 ' + host + ':' + port; });
-  rfb.addEventListener('disconnect', function () { hint.textContent = '已断开'; });
+  rfb.addEventListener('connect', function () { hint.textContent = '已连接 ' + host + ':' + port + '（等待画面…）'; });
+  rfb.addEventListener('disconnect', function (e) {
+    var msg = (e && e.detail && e.detail.message) ? '：' + e.detail.message : '';
+    hint.textContent = '已断开' + msg + '（目标 ' + url + '）';
+  });
+  rfb.addEventListener('error', function () { hint.textContent = '连接失败 ' + url; });
   rfb.addEventListener('credentialsrequired', function () {
     var p = window.prompt('请输入 VNC 密码：');
     if (p) rfb.sendCredentials({ password: p });
