@@ -96,8 +96,19 @@ static const NSTimeInterval kMaxRetryDelay = 30.0;
 
 - (NSString *)_deviceName {
     if (_deviceName) return _deviceName;
-    _deviceName = [_defaults stringForKey:kDesktopNameKey];
-    if (!_deviceName.length) _deviceName = @"TrollVNC";
+    // 优先使用设备真实名称（如"张三的 iPhone"），保证注册名/桌面名一致
+    NSString *realName = [[UIDevice currentDevice] name];
+    NSString *dn = [_defaults stringForKey:kDesktopNameKey];
+    if (dn.length && ![dn isEqualToString:@"TrollVNC"]) {
+        _deviceName = dn;
+    } else if (realName.length) {
+        _deviceName = realName;
+        // 同步到 DesktopName，使 mDNS/Bonjour 与 VNC 桌面名也是真实名称
+        [_defaults setObject:realName forKey:kDesktopNameKey];
+        [_defaults synchronize];
+    } else {
+        _deviceName = @"TrollVNC";
+    }
     return _deviceName;
 }
 
