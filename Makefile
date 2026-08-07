@@ -102,6 +102,7 @@ trollvncmanager_FILES += src/trollvncmanager.mm
 trollvncmanager_FILES += src/TRWatchDog.mm
 trollvncmanager_FILES += src/TaskProcess+ObjC.swift
 trollvncmanager_FILES += src/OhMyJetsam.mm
+trollvncmanager_FILES += src/TRGatewayClient.mm
 
 trollvncmanager_CFLAGS += -fobjc-arc
 trollvncmanager_CFLAGS += -Iinclude-spi

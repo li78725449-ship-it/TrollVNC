@@ -32,6 +32,7 @@
 #import <unistd.h>
 
 #import "Control.h"
+#import "TRGatewayClient.h"
 #import "Logging.h"
 #import "TRWatchDog.h"
 #import "libproc.h"
@@ -291,6 +292,8 @@ int main(int argc, const char *argv[]) {
             fprintf(stderr, "Failed to start watchdog\n");
             return EXIT_FAILURE;
         }
+        // Internal farm gateway registration/heartbeat (enabled when GatewayHost/URL is configured)
+        [[TRGatewayClient sharedClient] start];
     }
 
     {
