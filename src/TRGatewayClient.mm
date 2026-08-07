@@ -1,33 +1,51 @@
 /*
-  TRGatewayClient.mm - 见 TRGatewayClient.h
+  TRGatewayClient.mm - 内网群控网关注册/心跳客户端（BSD socket / TCP JSON 行协议）
+  协议：
+    -> {"type":"register","deviceId":"<uuid>","name":"<name>","vncPort":5901}
+    <- {"type":"ack","deviceId":"...","name":"..."}
+    -> {"type":"hello"}   每 30s
+  断线退避重连（2s 起，上限 30s）。
 */
 #import "TRGatewayClient.h"
 #import "Logging.h"
 
+#import <arpa/inet.h>
+#import <netdb.h>
+#import <netinet/in.h>
+#import <sys/socket.h>`n#import <sys/select.h>`n#import <sys/time.h>`n#import <time.h>
+#import <unistd.h>
+
 static NSString *const kDefaultsSuite = @"com.82flex.trollvnc";
 static NSString *const kDeviceUUIDKey = @"DeviceUUID";
-static NSString *const kGatewayURLKey = @"GatewayURL";
 static NSString *const kGatewayHostKey = @"GatewayHost";
 static NSString *const kGatewayPortKey = @"GatewayPort";
-static NSString *const kGatewayTokenKey = @"GatewayToken";
 static NSString *const kDesktopNameKey = @"DesktopName";
 static NSString *const kPortKey = @"Port";
 
 static const NSTimeInterval kHelloInterval = 30.0;
+static const NSTimeInterval kReadTimeout = 5.0;
+static const NSTimeInterval kMinRetryDelay = 2.0;
+static const NSTimeInterval kMaxRetryDelay = 30.0;
 
 @interface TRGatewayClient () {
     NSUserDefaults *_defaults;
-    NSURLSession *_session;
-    NSURLSessionWebSocketTask *_task;
-    NSTimer *_helloTimer;
-    NSTimer *_retryTimer;
+    NSThread *_workerThread;
     BOOL _started;
-    BOOL _connected;
     NSTimeInterval _retryDelay;
     NSString *_deviceId;
     NSString *_deviceName;
     NSInteger _vncPort;
 }
+
+- (NSString *)_gatewayHost;
+- (NSInteger)_gatewayPort;
+- (NSString *)_deviceId;
+- (NSString *)_deviceName;
+- (NSInteger)_vncPort;
+- (void)_workerMain;
+- (BOOL)_connectAndRun;
+- (void)_sendHello:(int)fd;
+- (NSString *)_jsonEscape:(NSString *)s;
 
 @end
 
@@ -46,23 +64,21 @@ static const NSTimeInterval kHelloInterval = 30.0;
     self = [super init];
     if (self) {
         _defaults = [[NSUserDefaults alloc] initWithSuiteName:kDefaultsSuite];
-        _retryDelay = 2.0;
+        _retryDelay = kMinRetryDelay;
     }
     return self;
 }
 
-#pragma mark - 配置读取
+#pragma mark - 配置
 
-- (NSString *)_gatewayURL {
-    NSString *url = [_defaults stringForKey:kGatewayURLKey];
-    if (url.length) return url;
-
+- (NSString *)_gatewayHost {
     NSString *host = [_defaults stringForKey:kGatewayHostKey];
+    return host.length ? host : nil;
+}
+
+- (NSInteger)_gatewayPort {
     NSInteger port = [_defaults integerForKey:kGatewayPortKey];
-    if (host.length && port > 0) {
-        return [NSString stringWithFormat:@"ws://%@:%ld", host, (long)port];
-    }
-    return nil;
+    return (port > 0 && port < 65536) ? port : 18081;
 }
 
 - (NSString *)_deviceId {
@@ -93,153 +109,130 @@ static const NSTimeInterval kHelloInterval = 30.0;
     return _vncPort;
 }
 
+- (NSString *)_jsonEscape:(NSString *)s {
+    NSMutableString *ms = [s mutableCopy];
+    [ms replaceOccurrencesOfString:@"\\" withString:@"\\\\" options:0 range:NSMakeRange(0, ms.length)];
+    [ms replaceOccurrencesOfString:@"\"" withString:@"\\\"" options:0 range:NSMakeRange(0, ms.length)];
+    return ms;
+}
+
 #pragma mark - 生命周期
 
 - (void)start {
     if (_started) return;
+    if (![self _gatewayHost]) {
+        TVLog(@"[gw] no gateway host configured, registration disabled");
+        return;
+    }
     _started = YES;
-
-    NSString *base = [self _gatewayURL];
-    if (!base.length) {
-        TVLog(@"[gw] no gateway configured, registration disabled");
-        return;
-    }
-
-    NSURLComponents *comp = [NSURLComponents componentsWithString:base];
-    comp.path = @"/ws/register";
-    NSMutableArray<NSURLQueryItem *> *q = [NSMutableArray array];
-    [q addObject:[NSURLQueryItem queryItemWithName:@"deviceId" value:[self _deviceId]]];
-    [q addObject:[NSURLQueryItem queryItemWithName:@"name" value:[self _deviceName]]];
-    [q addObject:[NSURLQueryItem queryItemWithName:@"vncPort" value:[NSString stringWithFormat:@"%ld", (long)[self _vncPort]]]];
-    NSString *token = [_defaults stringForKey:kGatewayTokenKey];
-    if (token.length) [q addObject:[NSURLQueryItem queryItemWithName:@"token" value:token]];
-    comp.queryItems = q;
-
-    NSURL *url = comp.URL;
-    if (!url) {
-        TVLog(@"[gw] invalid gateway URL");
-        return;
-    }
-
-    NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration defaultSessionConfiguration];
-    cfg.timeoutIntervalForRequest = 60;
-    _session = [NSURLSession sessionWithConfiguration:cfg delegate:self delegateQueue:nil];
-    _task = [_session webSocketTaskWithURL:url];
-    TVLog(@"[gw] connecting to %@", url.absoluteString);
-    [_task resume];
-    [self _receive];
+    _workerThread = [[NSThread alloc] initWithTarget:self selector:@selector(_workerMain) object:nil];
+    [_workerThread setName:@"com.82flex.trollvnc.gateway-client"];
+    [_workerThread start];
+    TVLog(@"[gw] registration worker started -> %@:%ld", [self _gatewayHost], (long)[self _gatewayPort]);
 }
 
 - (void)stop {
     _started = NO;
-    [_helloTimer invalidate];
-    _helloTimer = nil;
-    [_retryTimer invalidate];
-    _retryTimer = nil;
-    [_task cancelWithCloseCode:NSURLSessionWebSocketCloseCodeNormalClosure reason:nil];
-    [_session invalidateAndCancel];
-    _task = nil;
-    _session = nil;
-    _connected = NO;
-}
-
-- (void)_receive {
-    __weak typeof(self) weakSelf = self;
-    [_task receiveMessageWithCompletionHandler:^(NSURLSessionWebSocketMessage *_Nullable message, NSError *_Nullable error) {
-        __strong typeof(weakSelf) self = weakSelf;
-        if (!self) return;
-        if (error) return; // 断开/超时由 delegate 处理
-        // 目前只关心连接保持；服务端 ack 可留日志
-        [self _receive]; // 继续收下一条
-    }];
-}
-
-- (void)_sendHello {
-    if (!_task || _task.state != NSURLSessionTaskStateRunning) return;
-    NSString *hello = @"{\"type\":\"hello\"}";
-    [_task sendMessage:[NSURLSessionWebSocketMessage messageWithString:hello]
-      completionHandler:^(NSError *_Nullable error) {
-          if (error) {
-              TVLog(@"[gw] hello send failed: %@", error.localizedDescription);
-          }
-      }];
-}
-
-- (void)_scheduleReconnect {
-    if (!_started) return;
-    [_helloTimer invalidate];
-    _helloTimer = nil;
-    _connected = NO;
-
-    [_retryTimer invalidate];
-    _retryTimer = [NSTimer scheduledTimerWithTimeInterval:_retryDelay target:self
-                                                selector:@selector(_retryNow) userInfo:nil repeats:NO];
-    _retryDelay = MIN(_retryDelay * 2, 30.0);
-    TVLog(@"[gw] reconnect in %.0fs", _retryDelay);
-}
-
-- (void)_retryNow {
-    _retryTimer = nil;
-    if (!_started) return;
-    [_task cancelWithCloseCode:NSURLSessionWebSocketCloseCodeNormalClosure reason:nil];
-    _task = nil;
-    [_session invalidateAndCancel];
-    _session = nil;
-
-    NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration defaultSessionConfiguration];
-    cfg.timeoutIntervalForRequest = 60;
-    _session = [NSURLSession sessionWithConfiguration:cfg delegate:self delegateQueue:nil];
-
-    NSUserDefaults *d = _defaults;
-    NSString *base = [d stringForKey:kGatewayURLKey];
-    if (!base.length) {
-        NSString *host = [d stringForKey:kGatewayHostKey];
-        NSInteger port = [d integerForKey:kGatewayPortKey];
-        if (host.length && port > 0) base = [NSString stringWithFormat:@"ws://%@:%ld", host, (long)port];
+    if (_workerThread) {
+        // 线程内阻塞在 socket 读，最多 kReadTimeout 后退出
+        [_workerThread cancel];
+        _workerThread = nil;
     }
-    if (!base.length) return;
-
-    NSURLComponents *comp = [NSURLComponents componentsWithString:base];
-    comp.path = @"/ws/register";
-    NSMutableArray<NSURLQueryItem *> *q = [NSMutableArray array];
-    [q addObject:[NSURLQueryItem queryItemWithName:@"deviceId" value:[self _deviceId]]];
-    [q addObject:[NSURLQueryItem queryItemWithName:@"name" value:[self _deviceName]]];
-    [q addObject:[NSURLQueryItem queryItemWithName:@"vncPort" value:[NSString stringWithFormat:@"%ld", (long)[self _vncPort]]]];
-    NSString *token = [d stringForKey:kGatewayTokenKey];
-    if (token.length) [q addObject:[NSURLQueryItem queryItemWithName:@"token" value:token]];
-    comp.queryItems = q;
-
-    _task = [_session webSocketTaskWithURL:comp.URL];
-    TVLog(@"[gw] reconnecting...");
-    [_task resume];
-    [self _receive];
 }
 
-#pragma mark - NSURLSessionWebSocketDelegate
-
-- (void)URLSession:(NSURLSession *)session
-      webSocketTask:(NSURLSessionWebSocketTask *)webSocketTask
-    didOpenWithProtocol:(nullable NSString *)protocol {
-    _connected = YES;
-    _retryDelay = 2.0;
-    TVLog(@"[gw] registered: %@ (%@)", [self _deviceName], [self _deviceId]);
-    [self _sendHello];
-    [_helloTimer invalidate];
-    _helloTimer = [NSTimer scheduledTimerWithTimeInterval:kHelloInterval target:self
-                                                 selector:@selector(_sendHello) userInfo:nil repeats:YES];
+- (void)_workerMain {
+    while (_started && ![[NSThread currentThread] isCancelled]) {
+        @autoreleasepool {
+            BOOL ok = [self _connectAndRun];
+            if (!ok && _started) {
+                TVLog(@"[gw] connection lost, retry in %.0fs", _retryDelay);
+                usleep((useconds_t)(_retryDelay * 1e6));
+                _retryDelay = MIN(_retryDelay * 2, kMaxRetryDelay);
+            }
+        }
+    }
 }
 
-- (void)URLSession:(NSURLSession *)session
-      webSocketTask:(NSURLSessionWebSocketTask *)webSocketTask
-    didCloseWithCode:(NSURLSessionWebSocketCloseCode)closeCode reason:(nullable NSData *)reason {
-    TVLog(@"[gw] connection closed (code=%ld)", (long)closeCode);
-    [self _scheduleReconnect];
+- (BOOL)_connectAndRun {
+    NSString *host = [self _gatewayHost];
+    if (!host.length) return NO;
+
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return NO;
+
+    struct hostent *he = gethostbyname(host.UTF8String);
+    if (!he) {
+        close(fd);
+        return NO;
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)[self _gatewayPort]);
+    memcpy(&addr.sin_addr, he->h_addr, he->h_length);
+
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        close(fd);
+        return NO;
+    }
+    TVLog(@"[gw] connected to %@:%ld", host, (long)[self _gatewayPort]);
+
+    // register
+    NSString *reg = [NSString stringWithFormat:
+        @"{\"type\":\"register\",\"deviceId\":\"%@\",\"name\":\"%@\",\"vncPort\":%ld}\n",
+        [self _jsonEscape:[self _deviceId]], [self _jsonEscape:[self _deviceName]], (long)[self _vncPort]];
+    const char *regBytes = reg.UTF8String;
+    if (write(fd, regBytes, strlen(regBytes)) < 0) {
+        close(fd);
+        return NO;
+    }
+
+    _retryDelay = kMinRetryDelay;
+
+    // 读线程循环：读 ack/任意数据；每 kHelloInterval 发 hello；select 超时检测
+    char buf[512];
+    time_t lastHello = time(NULL);
+    while (_started && ![[NSThread currentThread] isCancelled]) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+        struct timeval tv;
+        tv.tv_sec = (time_t)kReadTimeout;
+        tv.tv_usec = 0;
+        int sel = select(fd + 1, &rfds, NULL, NULL, &tv);
+        if (sel < 0) {
+            close(fd);
+            return NO;
+        }
+        if (sel == 0) {
+            // 超时：每 kHelloInterval 发一次 hello（保活+探测）
+            time_t now = time(NULL);
+            if (now - lastHello >= (time_t)kHelloInterval) {
+                [self _sendHello:fd];
+                lastHello = now;
+            }
+            continue;
+        }
+        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        if (n <= 0) {
+            close(fd);
+            return NO;
+        }
+        buf[n] = '\0';
+        // ack 等消息暂只用于保活确认，无需处理
+        (void)buf;
+    }
+
+    close(fd);
+    return YES;
 }
 
-- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(nullable NSError *)error {
-    if (error) TVLog(@"[gw] connection error: %@", error.localizedDescription);
-    if (_connected) {
-        [self _scheduleReconnect];
+- (void)_sendHello:(int)fd {
+    const char *hello = "{\"type\":\"hello\"}\n";
+    ssize_t n = write(fd, hello, strlen(hello));
+    if (n < 0) {
+        // 写失败说明连接已断，read 循环会尽快退出
     }
 }
 
