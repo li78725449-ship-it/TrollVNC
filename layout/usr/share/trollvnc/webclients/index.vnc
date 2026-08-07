@@ -1,6 +1,7 @@
-<!-- index.vnc - TrollVNC 自动连接响应式页面（内网自用版）
+<!-- index.vnc - TrollVNC 自动连接响应式页面（基于原始可用版本重建，2026-08）
      $PORT 由 LibVNCServer 替换为 VNC 端口
-     操作集由能力清单驱动（caps.js，与网关控制台同源；宪法 6.6） -->
+     连接代码与原始可用版逐字节一致：仅依赖 noVNC core/rfb.js（无额外模块依赖）
+     操作集：内联默认值；caps.js 仅在可加载时作为增强（失败不影响连接） -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -10,9 +11,8 @@
 <title>TrollVNC</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  body { display: flex; align-items: center; justify-content: center; }
-  #stage { display: flex; align-items: stretch; max-width: 100vw; max-height: 100vh; }
-  #screen { position: relative; background: #000; }
+  body { display: flex; flex-direction: column; }
+  #screen { flex: 1; position: relative; min-height: 0; background: #000; }
   #screen canvas { position: absolute; left: 0; top: 0; }
   #hint {
     position: absolute; left: 8px; top: 8px; z-index: 5;
@@ -20,80 +20,44 @@
     border-radius: 12px; font: 12px system-ui, sans-serif; pointer-events: none;
     max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  /* 桌面：右侧紧贴屏幕的操作面板（图标 + hover 提示） */
   #bar {
-    width: 60px; flex: 0 0 60px;
-    display: flex; flex-direction: column; gap: 6px;
-    background: #141414; padding: 8px 6px; box-sizing: border-box;
-    overflow-y: auto;
+    display: flex; gap: clamp(4px, 1.5vw, 10px); justify-content: center;
+    padding: max(6px, env(safe-area-inset-bottom)) 8px;
+    background: #141414; flex-wrap: nowrap; overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
-  #barCaps { display: flex; flex-direction: column; gap: 6px; }
   #bar button {
-    min-height: 44px; font-size: 18px; border: 1px solid #333;
-    background: #222; color: #eee; border-radius: 10px; cursor: pointer;
+    flex: 0 0 auto;
+    min-width: clamp(44px, 16vw, 72px);
+    min-height: 44px;
+    border: 1px solid #333; background: #222; color: #eee;
+    border-radius: 10px; font: 500 13px system-ui, sans-serif;
+    padding: 4px 10px;
   }
   #bar button:active { background: #3a3a3a; }
-
-  /* 移动端：全屏画面 + 悬浮菜单按钮 */
-  #fabBtn {
-    display: none; position: fixed; right: 16px; bottom: 24px; z-index: 60;
-    width: 56px; height: 56px; border-radius: 50%; font-size: 24px;
-    background: #4f8cff; color: #fff; border: none; cursor: pointer;
-    box-shadow: 0 6px 20px rgba(0,0,0,.5);
-  }
-  #opsMenu {
-    display: none; position: fixed; right: 12px; bottom: 96px; z-index: 65;
-    width: min(300px, 90vw); background: #1f2a40; border: 1px solid #2b3852;
-    border-radius: 14px; padding: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.55);
-  }
-  #opsMenu.show { display: block; }
-  #opsMenu .g { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-  #opsMenu .g button { min-height: 44px; font-size: 18px; border: 1px solid #2b3852; background: #222; color: #eee; border-radius: 10px; }
-  #opsMenu #menuClose { width: 100%; margin-top: 8px; padding: 8px; border-radius: 10px; border: 1px solid #2b3852; background: #333; color: #ff9d9d; }
-
-  @media (max-width: 900px) {
-    #bar { display: none; }
-    #fabBtn { display: block; }
-    #stage { max-width: 100vw; }
+  @media (min-width: 900px) {
+    body { flex-direction: row; }
+    #bar { flex-direction: column; justify-content: flex-start; padding: 8px; }
+    #bar button { min-width: 64px; }
   }
 </style>
 </head>
 <body>
-<div id="stage">
-  <div id="screen"><div id="hint">连接中…</div></div>
-  <div id="bar">
-    <div id="barCaps"></div>
-    <hr style="border:none;border-top:1px solid #333;margin:4px 0" />
-    <button data-op="fit" title="适配画面">⛶</button>
-    <button data-op="full" title="全屏">🖥️</button>
-    <button data-op="disc" title="断开" style="color:#ff9d9d">⏹</button>
-  </div>
-</div>
-<button id="fabBtn" title="设备操作">⚙</button>
-<div id="opsMenu">
-  <div class="g" id="opsCaps"></div>
-  <div class="g" style="margin-top:6px">
-    <button data-op="fit" title="适配">⛶</button>
-    <button data-op="full" title="全屏">🖥️</button>
-    <button data-op="disc" title="断开">⏹</button>
-  </div>
-  <button id="menuClose">✕ 关闭</button>
+<div id="screen"><div id="hint">连接中…</div></div>
+<div id="bar">
+  <button id="bHome">Home</button>
+  <button id="bPower">电源</button>
+  <button id="bVolDn">Vol−</button>
+  <button id="bVolUp">Vol+</button>
+  <button id="bMute">静音</button>
+  <button id="bBriUp">亮+</button>
+  <button id="bBriDn">亮−</button>
+  <button id="bFit">适配</button>
+  <button id="bFull">全屏</button>
+  <button id="bDisc">断开</button>
 </div>
 <script type="module">
 import RFB from './novnc/core/rfb.js';
-// caps.js 通过动态导入加载（失败不影响连接）；内置默认集作为回退
-var DEFAULT_CAPS = ['home', 'power', 'volup', 'voldn', 'mute', 'briup', 'bridn', 'keyboard', 'clipboard'];
-var CAP_META = {
-  home:      { op: 'home',      label: 'Home',      icon: '🏠', title: 'Home 键' },
-  power:     { op: 'power',     label: '电源',      icon: '⏻',    title: '电源' },
-  volup:     { op: 'volup',     label: '音量 +',    icon: '🔊', title: '音量 +' },
-  voldn:     { op: 'voldn',     label: '音量 −',    icon: '🔉', title: '音量 −' },
-  mute:      { op: 'mute',      label: '静音',      icon: '🔇', title: '静音' },
-  briup:     { op: 'briup',     label: '亮度 +',    icon: '☀️', title: '亮度 +' },
-  bridn:     { op: 'bridn',     label: '亮度 −',    icon: '🌙', title: '亮度 −' },
-  keyboard:  { op: 'kb',        label: '键盘',      icon: '⌨️', title: '键盘' },
-  clipboard: { op: 'clip',      label: '剪贴板',    icon: '📋', title: '粘贴剪贴板' },
-};
 (function () {
   var host = location.hostname;
   var port = $PORT;
@@ -102,12 +66,6 @@ var CAP_META = {
 
   var screen = document.getElementById('screen');
   var hint = document.getElementById('hint');
-  var validPort = /^[0-9]+$/.test(String(port)) && port > 0 && port < 65536;
-  if (!validPort) {
-    hint.textContent = '端口异常：$PORT 未替换（期望 VNC 端口，如 5901）';
-  } else {
-    hint.textContent = '连接中 ' + url;
-  }
   var rfb = new RFB(screen, url, {});
   rfb.scaleViewport = true;
   rfb.resizeSession = false;
@@ -148,6 +106,7 @@ var CAP_META = {
     try { rfb.sendKey(ks, code, true); } catch (e) { return; }
     setTimeout(function () { try { rfb.sendKey(ks, code, false); } catch (e) {} }, 60);
   }
+  // 直接注入 RFB PointerEvent（type=5）：中键=电源（TrollVNC 映射）
   function pointer(mask) {
     try {
       var b = new Uint8Array(6);
@@ -156,66 +115,36 @@ var CAP_META = {
       if (mask !== 0) setTimeout(function () { pointer(0); }, 80);
     } catch (e) {}
   }
-  function doOp(op) {
-    switch (op) {
-      case 'home': tapKey(0xff50, 'Home'); break;
-      case 'power': pointer(2); break;
-      case 'volup': tapKey(0x1008ff13, 'AudioVolumeUp'); break;
-      case 'voldn': tapKey(0x1008ff11, 'AudioVolumeDown'); break;
-      case 'mute': tapKey(0x1008ff12, 'AudioVolumeMute'); break;
-      case 'briup': tapKey(0x1008ff03, 'BrightnessUp'); break;
-      case 'bridn': tapKey(0x1008ff02, 'BrightnessDown'); break;
-      case 'kb': try { rfb.focus(); } catch (e) {} break;
-      case 'clip':
-        navigator.clipboard.readText().then(function (t) { if (t) try { rfb.clipboardPasteFrom(t); } catch (e) {} }).catch(function () {});
-        break;
-      case 'fit': rfb.scaleViewport = true; break;
-      case 'full':
-        if (document.fullscreenElement) document.exitFullscreen();
-        else document.documentElement.requestFullscreen().catch(function () {});
-        break;
-      case 'disc': try { rfb.disconnect(); } catch (e) {} break;
-    }
-  }
-  // 能力清单驱动渲染（宪法 5.2/6.6）：设备操作来自清单（优先 runtime 注入 window.TVNC_CAPS），
-  // 适配/全屏/断开为本地操作，由静态按钮提供
-  function renderCapOps(container) {
-    if (!container) return;
-    var caps = (window.TVNC_CAPS && window.TVNC_CAPS.length) ? window.TVNC_CAPS : DEFAULT_CAPS;
-    container.innerHTML = '';
-    caps.forEach(function (c) {
-      var meta = CAP_META[c];
-      if (!meta) return;
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.dataset.op = meta.op;
-      b.title = meta.title;
-      b.textContent = meta.icon;
-      b.addEventListener('click', function () { doOp(meta.op); });
-      container.appendChild(b);
-    });
-  }
-  renderCapOps(document.getElementById('barCaps'));
-  renderCapOps(document.getElementById('opsCaps'));
+
+  document.getElementById('bHome').onclick = function () { tapKey(0xff50, 'Home'); };
+  document.getElementById('bPower').onclick = function () { pointer(2); };
+  document.getElementById('bVolDn').onclick = function () { tapKey(0x1008ff11, 'AudioVolumeDown'); };
+  document.getElementById('bVolUp').onclick = function () { tapKey(0x1008ff13, 'AudioVolumeUp'); };
+  document.getElementById('bMute').onclick = function () { tapKey(0x1008ff12, 'AudioVolumeMute'); };
+  document.getElementById('bBriUp').onclick = function () { tapKey(0x1008ff03, 'BrightnessUp'); };
+  document.getElementById('bBriDn').onclick = function () { tapKey(0x1008ff02, 'BrightnessDown'); };
+  document.getElementById('bFit').onclick = function () { rfb.scaleViewport = true; };
+  document.getElementById('bFull').onclick = function () {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(function () {});
+  };
+  document.getElementById('bDisc').onclick = function () {
+    try { rfb.disconnect(); } catch (e) {}
+  };
+
+  // 能力清单增强（可选）：caps.js 可加载时覆盖按钮标题（失败不影响连接）
   import('./caps.js').then(function (m) {
-    if (m && m.DEFAULT_CAPS) DEFAULT_CAPS = m.DEFAULT_CAPS;
-    if (m && m.CAP_META) CAP_META = m.CAP_META;
-    renderCapOps(document.getElementById('barCaps'));
-    renderCapOps(document.getElementById('opsCaps'));
-  }).catch(function () { /* caps.js 缺失不影响连接 */ });
-  function bind(sel) {
-    document.querySelectorAll(sel).forEach(function (b) {
-      b.addEventListener('click', function () { doOp(b.dataset.op); });
+    if (!m || !m.CAP_META) return;
+    var map = {
+      home: 'bHome', power: 'bPower', volup: 'bVolUp', voldn: 'bVolDn',
+      mute: 'bMute', briup: 'bBriUp', bridn: 'bBriDn'
+    };
+    Object.keys(map).forEach(function (op) {
+      var meta = m.CAP_META[op];
+      var el = document.getElementById(map[op]);
+      if (meta && el) el.textContent = meta.label;
     });
-  }
-  bind('#bar [data-op]');
-  bind('#opsMenu [data-op]');
-  document.getElementById('fabBtn').addEventListener('click', function () {
-    document.getElementById('opsMenu').classList.toggle('show');
-  });
-  document.getElementById('menuClose').addEventListener('click', function () {
-    document.getElementById('opsMenu').classList.remove('show');
-  });
+  }).catch(function () {});
 })();
 </script>
 </body>
