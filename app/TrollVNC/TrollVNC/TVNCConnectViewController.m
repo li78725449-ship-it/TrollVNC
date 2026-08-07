@@ -7,6 +7,7 @@
 #import "TVNCConnectViewController.h"
 #import "TVNCServiceCoordinator.h"
 #import "Control.h"
+#import "TVNCUtil.h"
 #import <sys/socket.h>
 
 #import <CoreImage/CoreImage.h>
@@ -97,10 +98,9 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 
 @interface TVNCConnectViewController ()
 
-@property(nonatomic, strong) UIView *statusDot;
-@property(nonatomic, strong) UILabel *statusLabel;
-@property(nonatomic, strong) UILabel *gatewayLabel;
-@property(nonatomic, strong) UILabel *nameLabel;
+@property(nonatomic, strong) UIView *statusDot;              // Hero 网关绿点
+@property(nonatomic, strong) UILabel *gatewayLabel;          // Hero 网关 ip:端口
+@property(nonatomic, strong) UILabel *nameLabel;             // Hero 设备名
 @property(nonatomic, strong) UISegmentedControl *modeSegment;
 @property(nonatomic, strong) UIView *contentCard;
 @property(nonatomic, strong) UIImageView *qrImageView;
@@ -110,6 +110,15 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 @property(nonatomic, strong) UILabel *statusPillLabel;
 @property(nonatomic, strong) UILabel *clientsCountLabel;
 @property(nonatomic, strong) NSUserDefaults *defaults;
+
+// 反向连接页
+@property(nonatomic, strong) UISegmentedControl *reverseSegment;
+@property(nonatomic, strong) UILabel *reverseIdLabel;
+@property(nonatomic, strong) UITextField *reverseServerField;
+@property(nonatomic, strong) UITextField *reverseIdField;
+@property(nonatomic, strong) UITextField *reverseIntervalField;
+@property(nonatomic, strong) UIButton *reverseDialButton;
+@property(nonatomic, assign) BOOL reverseDialing;
 
 @end
 
@@ -153,8 +162,13 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 
     [stack addArrangedSubview:[self makeHeroCard]];
     [stack addArrangedSubview:[self makeModeCard]];
-    [stack addArrangedSubview:[self makeDirectCard]];
+
+    self.contentCard = [[UIView alloc] init];
+    self.contentCard.translatesAutoresizingMaskIntoConstraints = NO;
+    [stack addArrangedSubview:self.contentCard];
+
     [stack addArrangedSubview:[self makeClientsCard]];
+    [self refreshContentCard];
 
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(refreshStatus)
@@ -229,42 +243,36 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
     self.nameLabel.textColor = [UIColor whiteColor];
     self.nameLabel.text = [[UIDevice currentDevice] name];
 
+    // 第 2 行：绿色圆点 + 网关 ip:端口（状态已移至右上角胶囊）
     self.statusDot = [[UIView alloc] init];
     self.statusDot.translatesAutoresizingMaskIntoConstraints = NO;
     self.statusDot.layer.cornerRadius = 4;
-
-    self.statusLabel = [[UILabel alloc] init];
-    self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.statusLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-    self.statusLabel.textColor = [UIColor whiteColor];
+    self.statusDot.backgroundColor = [UIColor systemGreenColor];
 
     self.gatewayLabel = [[UILabel alloc] init];
     self.gatewayLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.gatewayLabel.font = [UIFont systemFontOfSize:13];
     self.gatewayLabel.textColor = [UIColor colorWithWhite:1 alpha:0.92];
 
-    UIStackView *statusRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.statusDot, self.statusLabel]];
-    statusRow.translatesAutoresizingMaskIntoConstraints = NO;
-    statusRow.axis = UILayoutConstraintAxisHorizontal;
-    statusRow.spacing = 7;
+    UIStackView *gatewayRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.statusDot, self.gatewayLabel]];
+    gatewayRow.translatesAutoresizingMaskIntoConstraints = NO;
+    gatewayRow.axis = UILayoutConstraintAxisHorizontal;
+    gatewayRow.spacing = 7;
 
     [card addSubview:self.nameLabel];
-    [card addSubview:statusRow];
-    [card addSubview:self.gatewayLabel];
+    [card addSubview:gatewayRow];
 
     [NSLayoutConstraint activateConstraints:@[
         [card.heightAnchor constraintGreaterThanOrEqualToConstant:120],
         [self.nameLabel.topAnchor constraintEqualToAnchor:card.topAnchor constant:20],
         [self.nameLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:20],
         [self.nameLabel.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-20],
-        [statusRow.topAnchor constraintEqualToAnchor:self.nameLabel.bottomAnchor constant:14],
-        [statusRow.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:20],
+        [gatewayRow.topAnchor constraintEqualToAnchor:self.nameLabel.bottomAnchor constant:14],
+        [gatewayRow.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:20],
+        [gatewayRow.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-20],
         [self.statusDot.widthAnchor constraintEqualToConstant:8],
         [self.statusDot.heightAnchor constraintEqualToConstant:8],
-        [self.gatewayLabel.topAnchor constraintEqualToAnchor:statusRow.bottomAnchor constant:8],
-        [self.gatewayLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:20],
-        [self.gatewayLabel.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-20],
-        [self.gatewayLabel.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-20],
+        [gatewayRow.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-20],
     ]];
     return card;
 }
@@ -288,15 +296,217 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 }
 
 - (void)modeChanged:(UISegmentedControl *)seg {
-    // 反向连接参数摘要暂以弹窗提示（配置在设置页后续补齐）
-    if (seg.selectedSegmentIndex == 1) {
-        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"反向连接"
-                                                                  message:@"反向连接参数将在「设置」中提供配置"
-                                                           preferredStyle:UIAlertControllerStyleAlert];
-        [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:a animated:YES completion:nil];
-        seg.selectedSegmentIndex = 0;
+    [self refreshContentCard];
+    if (seg.selectedSegmentIndex == 0) {
+        [self generateQRAsync];
     }
+}
+
+#pragma mark - 内容卡切换（内网直连 / 反向连接）
+
+- (void)refreshContentCard {
+    if (!self.contentCard) return;
+    for (UIView *v in [self.contentCard.subviews copy]) {
+        [v removeFromSuperview];
+    }
+    BOOL reverse = (self.modeSegment.selectedSegmentIndex == 1);
+    UIView *card = reverse ? [self makeReverseCard] : [self makeDirectCard];
+    [self.contentCard addSubview:card];
+    [NSLayoutConstraint activateConstraints:@[
+        [card.topAnchor constraintEqualToAnchor:self.contentCard.topAnchor],
+        [card.leadingAnchor constraintEqualToAnchor:self.contentCard.leadingAnchor],
+        [card.trailingAnchor constraintEqualToAnchor:self.contentCard.trailingAnchor],
+        [card.bottomAnchor constraintEqualToAnchor:self.contentCard.bottomAnchor],
+    ]];
+}
+
+#pragma mark - 反向连接卡
+
+- (UIView *)makeReverseCard {
+    UIView *card = [self newCard];
+    UILabel *title = [self cardTitle:@"反向连接（需监听 VNC）"];
+    [card addSubview:title];
+
+    self.reverseSegment = [[UISegmentedControl alloc] initWithItems:@[@"查看端", @"中继器"]];
+    self.reverseSegment.translatesAutoresizingMaskIntoConstraints = NO;
+    NSString *mode = [self.defaults stringForKey:@"ReverseMode"];
+    self.reverseSegment.selectedSegmentIndex = ([mode isEqualToString:@"repeater"]) ? 1 : 0;
+    [self.reverseSegment addTarget:self action:@selector(reverseTypeChanged:) forControlEvents:UIControlEventValueChanged];
+    [card addSubview:self.reverseSegment];
+
+    // 字段纵向栈（隐藏行会自动折叠）
+    UIStackView *fieldStack = [[UIStackView alloc] init];
+    fieldStack.translatesAutoresizingMaskIntoConstraints = NO;
+    fieldStack.axis = UILayoutConstraintAxisVertical;
+    fieldStack.spacing = 8;
+
+    UILabel *serverLabel = [self fieldLabel:@"服务器地址"];
+    self.reverseServerField = [self fieldInput];
+    self.reverseServerField.placeholder = @"host:port";
+    self.reverseServerField.keyboardType = UIKeyboardTypeURL;
+    self.reverseServerField.text = [self.defaults stringForKey:@"ReverseSocket"] ?: @"";
+
+    self.reverseIdLabel = [self fieldLabel:@"中继 ID"];
+    self.reverseIdField = [self fieldInput];
+    self.reverseIdField.placeholder = @"仅中继器模式需要";
+    self.reverseIdField.keyboardType = UIKeyboardTypeNumberPad;
+    NSNumber *rid = [self.defaults objectForKey:@"ReverseRepeaterID"];
+    if (rid) self.reverseIdField.text = [NSString stringWithFormat:@"%@", rid];
+
+    UILabel *intervalLabel = [self fieldLabel:@"重拨间隔（秒）"];
+    self.reverseIntervalField = [self fieldInput];
+    self.reverseIntervalField.placeholder = @"0 = 关闭";
+    self.reverseIntervalField.keyboardType = UIKeyboardTypeNumberPad;
+    NSNumber *retry = [self.defaults objectForKey:@"ReverseRetrySec"];
+    if (retry) self.reverseIntervalField.text = [NSString stringWithFormat:@"%@", retry];
+
+    [fieldStack addArrangedSubview:serverLabel];
+    [fieldStack addArrangedSubview:self.reverseServerField];
+    [fieldStack addArrangedSubview:self.reverseIdLabel];
+    [fieldStack addArrangedSubview:self.reverseIdField];
+    [fieldStack addArrangedSubview:intervalLabel];
+    [fieldStack addArrangedSubview:self.reverseIntervalField];
+    [card addSubview:fieldStack];
+
+    BOOL repeater = (self.reverseSegment.selectedSegmentIndex == 1);
+    self.reverseIdLabel.hidden = !repeater;
+    self.reverseIdField.hidden = !repeater;
+
+    // 拨号按钮
+    self.reverseDialButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.reverseDialButton.translatesAutoresizingMaskIntoConstraints = NO;
+    self.reverseDialButton.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    [self.reverseDialButton setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
+    [self.reverseDialButton addTarget:self action:@selector(dialReverse:) forControlEvents:UIControlEventTouchUpInside];
+    [card addSubview:self.reverseDialButton];
+
+    // 恢复直连
+    UIButton *restore = [UIButton buttonWithType:UIButtonTypeSystem];
+    restore.translatesAutoresizingMaskIntoConstraints = NO;
+    [restore setTitle:@"恢复直连" forState:UIControlStateNormal];
+    restore.titleLabel.font = [UIFont systemFontOfSize:14];
+    [restore addTarget:self action:@selector(restoreDirect:) forControlEvents:UIControlEventTouchUpInside];
+    [card addSubview:restore];
+
+    // 提示
+    UILabel *hint = [[UILabel alloc] init];
+    hint.translatesAutoresizingMaskIntoConstraints = NO;
+    hint.font = [UIFont systemFontOfSize:12];
+    hint.textColor = [UIColor secondaryLabelColor];
+    hint.textAlignment = NSTextAlignmentCenter;
+    hint.text = @"反向模式会关闭 5901 / 5801 / Bonjour";
+    [card addSubview:hint];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [title.topAnchor constraintEqualToAnchor:card.topAnchor constant:16],
+        [title.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18],
+        [title.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18],
+
+        [self.reverseSegment.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:12],
+        [self.reverseSegment.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18],
+        [self.reverseSegment.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18],
+
+        [fieldStack.topAnchor constraintEqualToAnchor:self.reverseSegment.bottomAnchor constant:14],
+        [fieldStack.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18],
+        [fieldStack.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18],
+
+        [self.reverseDialButton.topAnchor constraintEqualToAnchor:fieldStack.bottomAnchor constant:16],
+        [self.reverseDialButton.centerXAnchor constraintEqualToAnchor:card.centerXAnchor],
+        [self.reverseDialButton.heightAnchor constraintEqualToConstant:44],
+
+        [restore.topAnchor constraintEqualToAnchor:self.reverseDialButton.bottomAnchor constant:4],
+        [restore.centerXAnchor constraintEqualToAnchor:card.centerXAnchor],
+
+        [hint.topAnchor constraintEqualToAnchor:restore.bottomAnchor constant:10],
+        [hint.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18],
+        [hint.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18],
+        [hint.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-14],
+    ]];
+
+    [self updateReverseDialUI];
+    return card;
+}
+
+- (void)reverseTypeChanged:(UISegmentedControl *)seg {
+    BOOL repeater = (seg.selectedSegmentIndex == 1);
+    self.reverseIdLabel.hidden = !repeater;
+    self.reverseIdField.hidden = !repeater;
+}
+
+- (void)dialReverse:(UIButton *)sender {
+    NSString *server = [self.reverseServerField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (!server.length) {
+        [self toast:@"请填写服务器地址（host:port）"];
+        return;
+    }
+    NSString *mode = (self.reverseSegment.selectedSegmentIndex == 1) ? @"repeater" : @"viewer";
+    [self.defaults setObject:mode forKey:@"ReverseMode"];
+    [self.defaults setObject:server forKey:@"ReverseSocket"];
+    [self.defaults setInteger:[self.reverseIdField.text integerValue] forKey:@"ReverseRepeaterID"];
+    double retry = [self.reverseIntervalField.text doubleValue];
+    if (retry < 0) retry = 0;
+    [self.defaults setDouble:retry forKey:@"ReverseRetrySec"];
+    [self.defaults synchronize];
+
+    self.reverseDialing = YES;
+    [sender setTitle:@"拨号中…" forState:UIControlStateNormal];
+    sender.enabled = NO;
+    TVNCRestartVNCService();
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        typeof(self) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.reverseDialing = NO;
+        [strongSelf updateReverseDialUI];
+    });
+}
+
+- (void)restoreDirect:(UIButton *)sender {
+    [self.defaults setObject:@"none" forKey:@"ReverseMode"];
+    [self.defaults synchronize];
+    self.reverseDialing = NO;
+    TVNCRestartVNCService();
+    [self toast:@"已恢复内网直连"];
+    [self updateReverseDialUI];
+}
+
+- (void)updateReverseDialUI {
+    if (!self.reverseDialButton) return;
+    if (self.reverseDialing) {
+        [self.reverseDialButton setTitle:@"拨号中…" forState:UIControlStateNormal];
+        self.reverseDialButton.enabled = NO;
+        return;
+    }
+    NSString *mode = [self.defaults stringForKey:@"ReverseMode"];
+    BOOL reverseConfigured = ([mode isEqualToString:@"viewer"] || [mode isEqualToString:@"repeater"]);
+    BOOL running = [[TVNCServiceCoordinator sharedCoordinator] isServiceRunning];
+    if (reverseConfigured && running) {
+        [self.reverseDialButton setTitle:@"已连接" forState:UIControlStateNormal];
+        self.reverseDialButton.enabled = NO;
+    } else {
+        [self.reverseDialButton setTitle:@"拨号" forState:UIControlStateNormal];
+        self.reverseDialButton.enabled = YES;
+    }
+}
+
+- (UILabel *)fieldLabel:(NSString *)t {
+    UILabel *l = [[UILabel alloc] init];
+    l.translatesAutoresizingMaskIntoConstraints = NO;
+    l.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    l.textColor = [UIColor secondaryLabelColor];
+    l.text = t;
+    return l;
+}
+
+- (UITextField *)fieldInput {
+    UITextField *f = [[UITextField alloc] init];
+    f.translatesAutoresizingMaskIntoConstraints = NO;
+    f.borderStyle = UITextBorderStyleRoundedRect;
+    f.font = [UIFont systemFontOfSize:15];
+    f.autocorrectionType = UITextAutocorrectionTypeNo;
+    f.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    return f;
 }
 
 #pragma mark - 扫码直连卡
@@ -449,16 +659,15 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 #pragma mark - 状态
 
 - (void)refreshStatus {
-    BOOL running = [[TVNCServiceCoordinator sharedCoordinator] isServiceRunning];
-    self.statusDot.backgroundColor = running ? [UIColor systemGreenColor] : [UIColor systemGrayColor];
-    self.statusLabel.text = running ? @"已连接" : @"未连接";
-
     NSString *host = [self.defaults stringForKey:@"GatewayHost"];
+    NSInteger consolePort = [self.defaults integerForKey:@"TVNCConsolePort"];
+    if (consolePort <= 0) consolePort = 8080;
     if (host.length) {
-        self.gatewayLabel.text = [NSString stringWithFormat:@"网关 %@:8080", host];
+        self.gatewayLabel.text = [NSString stringWithFormat:@"网关 %@:%ld", host, (long)consolePort];
     } else {
         self.gatewayLabel.text = @"网关未配置（设置 → 网关）";
     }
+    [self updateReverseDialUI];
 }
 
 #pragma mark - 在线客户端计数
