@@ -16,6 +16,7 @@
 */
 
 #import "TVNCServiceCoordinator.h"
+#import "TVNCUtil.h"
 #import "TrollVNC-Swift.h"
 
 #import <Foundation/Foundation.h>
@@ -26,6 +27,7 @@
 #import <netinet/in.h>
 #import <sys/socket.h>
 #import <dlfcn.h>
+#import <notify.h>
 
 #import "Control.h"
 
@@ -41,6 +43,8 @@ int SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions(CFStringRef bundleI
 
 @interface TVNCServiceCoordinator ()
 @property(nonatomic, strong) NSTimer *checkTimer;
+@property(nonatomic, strong) NSTimer *restartTimer;
+@property(nonatomic, assign) int32_t prefsNotifyToken;
 @property(nonatomic, strong) NSUserDefaults *userDefaults;
 @end
 
@@ -153,6 +157,36 @@ NSString *TVNCDeviceUDID(void) {
                                                  userInfo:nil
                                                   repeats:YES];
     [self registerBackgroundTasks];
+    [self registerPrefsWatcher];
+}
+
+#pragma mark - 设置变更自动生效（HttpPort/Port 等需重启服务重新加载）
+
+- (void)registerPrefsWatcher {
+    if (self.prefsNotifyToken != 0) return;
+    __weak typeof(self) weakSelf = self;
+    notify_register_dispatch(TVNC_NOTIFY_PREFS_CHANGED, &_prefsNotifyToken, dispatch_get_main_queue(), ^(int token) {
+        (void)token;
+        typeof(self) strongSelf = weakSelf;
+        if (strongSelf) {
+            [strongSelf prefsChanged];
+        }
+    });
+}
+
+- (void)prefsChanged {
+    // 去抖：连续改动后 1.5s 重启 VNC 服务，使其重新读取 HttpPort/Port/Bonjour 等配置
+    [self.restartTimer invalidate];
+    self.restartTimer = [NSTimer scheduledTimerWithTimeInterval:1.5
+                                                         target:self
+                                                       selector:@selector(restartServiceForPrefs)
+                                                       userInfo:nil
+                                                        repeats:NO];
+}
+
+- (void)restartServiceForPrefs {
+    self.restartTimer = nil;
+    TVNCRestartVNCService();
 }
 
 - (BOOL)isServiceRunning {
