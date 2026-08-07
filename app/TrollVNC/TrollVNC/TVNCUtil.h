@@ -17,6 +17,7 @@
 
 #import <Foundation/Foundation.h>
 #import <sys/sysctl.h>
+#import <dlfcn.h>
 
 #define TVNC_NOTIFY_PREFS_CHANGED "com.82flex.trollvnc.prefs-changed"
 
