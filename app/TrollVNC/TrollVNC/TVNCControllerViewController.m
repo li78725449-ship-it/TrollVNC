@@ -17,20 +17,86 @@
 
 #import "TVNCControllerViewController.h"
 #import "TVNCViewerViewController.h"
+#import <rfb/rfbclient.h>
 
 static NSString *const kDefaultsSuite = @"com.82flex.trollvnc";
 static const NSInteger kConsolePort = 8080; // trollvnc-farm FARM_PORT 默认
 static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横屏1..6, 竖屏1..6
 
-#pragma mark - 设备卡片 Cell（v1 占位画面）
+#pragma mark - 缩略图抓帧（一次性只读 RFB）
+
+static BOOL gThumbFrameReady = NO;
+
+static rfbBool TVNCThumbMallocFrameBuffer(rfbClient *client) {
+    size_t bytes = (size_t)client->width * (size_t)client->height * (size_t)(client->format.bitsPerPixel / 8);
+    if (bytes == 0) return FALSE;
+    client->frameBuffer = malloc(bytes);
+    return client->frameBuffer ? TRUE : FALSE;
+}
+
+static void TVNCThumbFinishedUpdate(rfbClient *client) {
+    (void)client;
+    gThumbFrameReady = YES;
+}
+
+static UIImage *TVNCFetchThumbnail(NSString *host, int port, double timeoutSec) {
+    gThumbFrameReady = NO;
+    int argc = 1;
+    char arg0[] = "thumb";
+    char *argv[] = { arg0, NULL };
+    rfbClient *client = rfbGetClient(8, 3, 4);
+    if (!client) return nil;
+    client->serverHost = strdup(host.UTF8String);
+    client->serverPort = port;
+    client->MallocFrameBuffer = TVNCThumbMallocFrameBuffer;
+    client->FinishedFrameBufferUpdate = TVNCThumbFinishedUpdate;
+    if (!rfbInitClient(client, &argc, argv)) {
+        rfbClientCleanup(client);
+        return nil;
+    }
+    SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE);
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeoutSec];
+    while (!gThumbFrameReady && [deadline timeIntervalSinceNow] > 0) {
+        int sel = WaitForMessage(client, 500000); // 500ms 分片轮询
+        if (sel < 0) break;
+        if (sel > 0) {
+            if (!HandleRFBServerMessage(client)) break;
+        }
+    }
+    UIImage *img = nil;
+    if (gThumbFrameReady && client->frameBuffer && client->width > 0 && client->height > 0) {
+        int w = client->width, h = client->height, bpp = client->format.bitsPerPixel / 8;
+        if (bpp >= 3) {
+            CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+            CGBitmapInfo info = (client->format.redShift == 0)
+                ? (kCGImageAlphaNoneSkipLast | kCGBitmapByteOrderDefault)
+                : (kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+            CGContextRef ctx = CGBitmapContextCreate(client->frameBuffer, w, h, 8, (size_t)w * bpp, cs, info);
+            if (ctx) {
+                CGImageRef cg = CGBitmapContextCreateImage(ctx);
+                if (cg) {
+                    img = [UIImage imageWithCGImage:cg];
+                    CGImageRelease(cg);
+                }
+                CGContextRelease(ctx);
+            }
+            CGColorSpaceRelease(cs);
+        }
+    }
+    rfbClientCleanup(client);
+    return img;
+}
+
+#pragma mark - 设备卡片 Cell
 
 @interface TVNCDeviceCardCell : UICollectionViewCell
 @property(nonatomic, strong) UIView *screenArea;
 @property(nonatomic, strong) UIImageView *screenIcon;
+@property(nonatomic, strong) UIImageView *thumbView;
 @property(nonatomic, strong) UILabel *tagLabel;
 @property(nonatomic, strong) UILabel *nameLabel;
 @property(nonatomic, strong) UIView *dotView;
-- (void)configureWithDevice:(NSDictionary *)d;
+- (void)configureWithDevice:(NSDictionary *)d thumbnail:(UIImage *)thumb;
 @end
 
 @implementation TVNCDeviceCardCell
@@ -58,6 +124,13 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
         _screenIcon.contentMode = UIViewContentModeScaleAspectFit;
         _screenIcon.tintColor = [UIColor systemGrayColor];
         [_screenArea addSubview:_screenIcon];
+
+        _thumbView = [[UIImageView alloc] init];
+        _thumbView.translatesAutoresizingMaskIntoConstraints = NO;
+        _thumbView.contentMode = UIViewContentModeScaleAspectFit;
+        _thumbView.backgroundColor = [UIColor blackColor];
+        _thumbView.hidden = YES;
+        [_screenArea addSubview:_thumbView];
 
         _tagLabel = [[UILabel alloc] init];
         _tagLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -93,6 +166,11 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
             [_screenIcon.widthAnchor constraintEqualToConstant:34],
             [_screenIcon.heightAnchor constraintEqualToConstant:40],
 
+            [_thumbView.topAnchor constraintEqualToAnchor:_screenArea.topAnchor],
+            [_thumbView.leadingAnchor constraintEqualToAnchor:_screenArea.leadingAnchor],
+            [_thumbView.trailingAnchor constraintEqualToAnchor:_screenArea.trailingAnchor],
+            [_thumbView.bottomAnchor constraintEqualToAnchor:_screenArea.bottomAnchor],
+
             [_tagLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:10],
             [_tagLabel.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-10],
             [_tagLabel.widthAnchor constraintEqualToConstant:38],
@@ -111,7 +189,7 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
     return self;
 }
 
-- (void)configureWithDevice:(NSDictionary *)d {
+- (void)configureWithDevice:(NSDictionary *)d thumbnail:(UIImage *)thumb {
     BOOL online = [d[@"online"] boolValue];
     self.nameLabel.text = d[@"name"] ?: d[@"id"] ?: @"?";
     self.tagLabel.text = @"直连";
@@ -120,6 +198,14 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
     self.dotView.backgroundColor = online ? [UIColor systemGreenColor] : [UIColor systemGrayColor];
     self.screenArea.backgroundColor = [UIColor colorWithWhite:online ? 0.93 : 0.96 alpha:1];
     self.screenIcon.tintColor = online ? [UIColor systemGrayColor] : [UIColor systemGray3Color];
+    if (thumb) {
+        self.thumbView.image = thumb;
+        self.thumbView.hidden = NO;
+        self.screenIcon.hidden = YES;
+    } else {
+        self.thumbView.hidden = YES;
+        self.screenIcon.hidden = NO;
+    }
 }
 
 @end
@@ -139,6 +225,12 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
 @property(nonatomic, assign) NSInteger filterIndex; // 0 全部 / 1 直连 / 2 中继
 @property(nonatomic, assign) NSInteger layoutIndex; // 0-11: 横屏1..6 / 竖屏1..6
 @property(nonatomic, strong) NSUserDefaults *defaults;
+
+// 缩略图缓存（deviceId -> @{img, ts}）
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *thumbnailCache;
+@property(nonatomic, strong) dispatch_queue_t thumbnailQueue;
+@property(nonatomic, strong) NSTimer *thumbnailTimer;
+@property(nonatomic, assign) BOOL stopThumbnails;
 
 @end
 
@@ -261,12 +353,39 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
                                                                                            target:self
                                                                                            action:@selector(refreshDevices)];
+
+    // 卡片真实画面快照：串行抓帧 + 定时刷新
+    self.thumbnailCache = [NSMutableDictionary dictionary];
+    self.thumbnailQueue = dispatch_queue_create("com.82flex.trollvnc.thumbs", DISPATCH_QUEUE_SERIAL);
+    self.stopThumbnails = NO;
+    self.thumbnailTimer = [NSTimer scheduledTimerWithTimeInterval:10.0
+                                                           target:self
+                                                         selector:@selector(refreshThumbnails)
+                                                         userInfo:nil
+                                                          repeats:YES];
     [self refreshDevices];
+    [self refreshThumbnails];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    self.stopThumbnails = NO;
+    if (!self.thumbnailTimer) {
+        self.thumbnailTimer = [NSTimer scheduledTimerWithTimeInterval:10.0
+                                                               target:self
+                                                             selector:@selector(refreshThumbnails)
+                                                             userInfo:nil
+                                                              repeats:YES];
+    }
     [self refreshDevices];
+    [self refreshThumbnails];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    self.stopThumbnails = YES;
+    [self.thumbnailTimer invalidate];
+    self.thumbnailTimer = nil;
 }
 
 #pragma mark - 布局菜单
@@ -347,6 +466,7 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
 - (void)layoutTapped:(UIButton *)sender {
     BOOL show = self.layoutPanel.hidden;
     if (show) {
+        [self.view bringSubviewToFront:self.layoutPanel];
         [self refreshLayoutPanelChecks];
     }
     self.layoutPanel.hidden = !show;
@@ -464,6 +584,7 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
         }
     }
     [self applyFilter];
+    [self refreshThumbnails];
 }
 
 - (void)applyFilter {
@@ -493,7 +614,9 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
 - (__kindof UICollectionViewCell *)collectionView:(UICollectionView *)collectionView
                            cellForItemAtIndexPath:(NSIndexPath *)ip {
     TVNCDeviceCardCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"card" forIndexPath:ip];
-    [cell configureWithDevice:self.shown[ip.row]];
+    NSDictionary *d = self.shown[ip.row];
+    UIImage *thumb = self.thumbnailCache[d[@"id"]][@"img"];
+    [cell configureWithDevice:d thumbnail:thumb];
     return cell;
 }
 
@@ -520,6 +643,50 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
     int port = (int)([d[@"port"] integerValue] ?: 5901);
     TVNCViewerViewController *viewer = [[TVNCViewerViewController alloc] initWithHost:host port:port name:d[@"name"] ?: host];
     [self.navigationController pushViewController:viewer animated:YES];
+}
+
+#pragma mark - 卡片画面快照
+
+- (void)refreshThumbnails {
+    if (self.stopThumbnails || !self.view.window) return;
+    NSMutableArray *tasks = [NSMutableArray array];
+    NSDate *now = [NSDate date];
+    for (NSDictionary *d in self.shown) {
+        if (![d[@"online"] boolValue]) continue;
+        NSString *did = d[@"id"] ?: @"";
+        NSString *host = d[@"host"];
+        if (!did.length || !host.length) continue;
+        NSDictionary *cached = self.thumbnailCache[did];
+        NSDate *ts = cached[@"ts"];
+        if (ts && [now timeIntervalSinceDate:ts] < 8.0) continue; // 8s 内不重复抓
+        int port = (int)([d[@"port"] integerValue] ?: 5901);
+        [tasks addObject:@{ @"id" : did, @"host" : host, @"port" : @(port) }];
+    }
+    if (!tasks.count) return;
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(self.thumbnailQueue, ^{
+        for (NSDictionary *t in tasks) {
+            if (weakSelf.stopThumbnails) break;
+            UIImage *img = TVNCFetchThumbnail(t[@"host"], [t[@"port"] intValue], 5.0);
+            if (!img) continue;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                typeof(self) strongSelf = weakSelf;
+                if (!strongSelf || strongSelf.stopThumbnails) return;
+                strongSelf.thumbnailCache[t[@"id"]] = @{ @"img" : img, @"ts" : [NSDate date] };
+                [strongSelf reloadCellForDeviceId:t[@"id"]];
+            });
+        }
+    });
+}
+
+- (void)reloadCellForDeviceId:(NSString *)did {
+    for (NSInteger i = 0; i < (NSInteger)self.shown.count; i++) {
+        if ([self.shown[i][@"id"] isEqualToString:did]) {
+            [self.collectionView reloadItemsAtIndexPaths:@[ [NSIndexPath indexPathForItem:i inSection:0] ]];
+            break;
+        }
+    }
 }
 
 #pragma mark - 过滤
