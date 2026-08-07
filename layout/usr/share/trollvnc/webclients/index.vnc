@@ -1,4 +1,4 @@
-﻿<!-- index.vnc - TrollVNC 自动连接响应式页面（内网自用版）
+<!-- index.vnc - TrollVNC 自动连接响应式页面（内网自用版）
      $PORT 由 LibVNCServer 替换为 VNC 端口 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -8,8 +8,9 @@
 <title>TrollVNC</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  body { display: flex; flex-direction: column; }
-  #screen { flex: 1; position: relative; min-height: 0; background: #000; }
+  body { display: flex; align-items: center; justify-content: center; }
+  #stage { display: flex; align-items: stretch; max-width: 100vw; max-height: 100vh; }
+  #screen { position: relative; background: #000; }
   #screen canvas { position: absolute; left: 0; top: 0; }
   #hint {
     position: absolute; left: 8px; top: 8px; z-index: 5;
@@ -17,38 +18,78 @@
     border-radius: 12px; font: 12px system-ui, sans-serif; pointer-events: none;
     max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  /* 桌面：右侧紧贴屏幕的操作面板（图标 + hover 提示） */
   #bar {
-    display: flex; gap: clamp(4px, 1.5vw, 10px); justify-content: center;
-    padding: max(6px, env(safe-area-inset-bottom)) 8px;
-    background: #141414; flex-wrap: nowrap; overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    width: 60px; flex: 0 0 60px;
+    display: flex; flex-direction: column; gap: 6px;
+    background: #141414; padding: 8px 6px; box-sizing: border-box;
+    overflow-y: auto;
   }
   #bar button {
-    flex: 0 0 auto;
-    min-width: clamp(44px, 16vw, 72px);
-    min-height: 44px;
-    border: 1px solid #333; background: #222; color: #eee;
-    border-radius: 10px; font: 500 13px system-ui, sans-serif;
-    padding: 4px 10px;
+    min-height: 44px; font-size: 18px; border: 1px solid #333;
+    background: #222; color: #eee; border-radius: 10px; cursor: pointer;
   }
   #bar button:active { background: #3a3a3a; }
-  @media (min-width: 900px) {
-    body { flex-direction: row; }
-    #bar { flex-direction: column; justify-content: flex-start; padding: 8px; }
-    #bar button { min-width: 64px; }
+
+  /* 移动端：全屏画面 + 悬浮菜单按钮 */
+  #fabBtn {
+    display: none; position: fixed; right: 16px; bottom: 24px; z-index: 60;
+    width: 56px; height: 56px; border-radius: 50%; font-size: 24px;
+    background: #4f8cff; color: #fff; border: none; cursor: pointer;
+    box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  }
+  #opsMenu {
+    display: none; position: fixed; right: 12px; bottom: 96px; z-index: 65;
+    width: min(300px, 90vw); background: #1f2a40; border: 1px solid #2b3852;
+    border-radius: 14px; padding: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.55);
+  }
+  #opsMenu.show { display: block; }
+  #opsMenu .g { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  #opsMenu .g button { min-height: 44px; font-size: 18px; border: 1px solid #2b3852; background: #222; color: #eee; border-radius: 10px; }
+  #opsMenu #menuClose { width: 100%; margin-top: 8px; padding: 8px; border-radius: 10px; border: 1px solid #2b3852; background: #333; color: #ff9d9d; }
+
+  @media (max-width: 900px) {
+    #bar { display: none; }
+    #fabBtn { display: block; }
+    #stage { max-width: 100vw; }
   }
 </style>
 </head>
 <body>
-<div id="screen"><div id="hint">连接中…</div></div>
-<div id="bar">
-  <button id="bHome">Home</button>
-  <button id="bPower">电源</button>
-  <button id="bVolDn">Vol−</button>
-  <button id="bVolUp">Vol+</button>
-  <button id="bFit">适配</button>
-  <button id="bFull">全屏</button>
-  <button id="bDisc">断开</button>
+<div id="stage">
+  <div id="screen"><div id="hint">连接中…</div></div>
+  <div id="bar">
+    <button data-op="home" title="Home 键">🏠</button>
+    <button data-op="power" title="电源">⏻</button>
+    <button data-op="volup" title="音量 +">🔊</button>
+    <button data-op="voldn" title="音量 −">🔉</button>
+    <button data-op="mute" title="静音">🔇</button>
+    <button data-op="briup" title="亮度 +">☀️</button>
+    <button data-op="bridn" title="亮度 −">🌙</button>
+    <button data-op="kb" title="键盘">⌨️</button>
+    <button data-op="clip" title="粘贴剪贴板">📋</button>
+    <button data-op="fit" title="适配画面">⛶</button>
+    <button data-op="full" title="全屏">🖥️</button>
+    <button data-op="disc" title="断开" style="color:#ff9d9d">⏹</button>
+  </div>
+</div>
+<button id="fabBtn" title="设备操作">⚙</button>
+<div id="opsMenu">
+  <div class="g">
+    <button data-op="home" title="Home">🏠</button>
+    <button data-op="power" title="电源">⏻</button>
+    <button data-op="volup" title="音量+">🔊</button>
+    <button data-op="voldn" title="音量−">🔉</button>
+    <button data-op="mute" title="静音">🔇</button>
+    <button data-op="briup" title="亮度+">☀️</button>
+    <button data-op="bridn" title="亮度−">🌙</button>
+    <button data-op="kb" title="键盘">⌨️</button>
+    <button data-op="clip" title="剪贴板">📋</button>
+    <button data-op="fit" title="适配">⛶</button>
+    <button data-op="full" title="全屏">🖥️</button>
+    <button data-op="disc" title="断开">⏹</button>
+  </div>
+  <button id="menuClose">✕ 关闭</button>
 </div>
 <script type="module">
 import RFB from './novnc/core/rfb.js';
@@ -65,12 +106,8 @@ import RFB from './novnc/core/rfb.js';
   rfb.resizeSession = false;
   rfb.showDotCursor = true;
 
-  rfb.addEventListener('connect', function () {
-    hint.textContent = '已连接 ' + host + ':' + port;
-  });
-  rfb.addEventListener('disconnect', function () {
-    hint.textContent = '已断开（点「断开」可重连）';
-  });
+  rfb.addEventListener('connect', function () { hint.textContent = '已连接 ' + host + ':' + port; });
+  rfb.addEventListener('disconnect', function () { hint.textContent = '已断开'; });
   rfb.addEventListener('credentialsrequired', function () {
     var p = window.prompt('请输入 VNC 密码：');
     if (p) rfb.sendCredentials({ password: p });
@@ -80,7 +117,6 @@ import RFB from './novnc/core/rfb.js';
     try { rfb.sendKey(ks, code, true); } catch (e) { return; }
     setTimeout(function () { try { rfb.sendKey(ks, code, false); } catch (e) {} }, 60);
   }
-  // 直接注入 RFB PointerEvent（type=5）：中键=电源（TrollVNC 映射）
   function pointer(mask) {
     try {
       var b = new Uint8Array(6);
@@ -89,19 +125,40 @@ import RFB from './novnc/core/rfb.js';
       if (mask !== 0) setTimeout(function () { pointer(0); }, 80);
     } catch (e) {}
   }
-
-  document.getElementById('bHome').onclick = function () { tapKey(0xff50, 'Home'); };
-  document.getElementById('bPower').onclick = function () { pointer(2); };
-  document.getElementById('bVolDn').onclick = function () { tapKey(0x1008ff11, 'AudioVolumeDown'); };
-  document.getElementById('bVolUp').onclick = function () { tapKey(0x1008ff13, 'AudioVolumeUp'); };
-  document.getElementById('bFit').onclick = function () { rfb.scaleViewport = true; };
-  document.getElementById('bFull').onclick = function () {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else document.documentElement.requestFullscreen();
-  };
-  document.getElementById('bDisc').onclick = function () {
-    try { rfb.disconnect(); } catch (e) {}
-  };
+  function doOp(op) {
+    switch (op) {
+      case 'home': tapKey(0xff50, 'Home'); break;
+      case 'power': pointer(2); break;
+      case 'volup': tapKey(0x1008ff13, 'AudioVolumeUp'); break;
+      case 'voldn': tapKey(0x1008ff11, 'AudioVolumeDown'); break;
+      case 'mute': tapKey(0x1008ff12, 'AudioVolumeMute'); break;
+      case 'briup': tapKey(0x1008ff03, 'BrightnessUp'); break;
+      case 'bridn': tapKey(0x1008ff02, 'BrightnessDown'); break;
+      case 'kb': try { rfb.focus(); } catch (e) {} break;
+      case 'clip':
+        navigator.clipboard.readText().then(function (t) { if (t) try { rfb.clipboardPasteFrom(t); } catch (e) {} }).catch(function () {});
+        break;
+      case 'fit': rfb.scaleViewport = true; break;
+      case 'full':
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen().catch(function () {});
+        break;
+      case 'disc': try { rfb.disconnect(); } catch (e) {} break;
+    }
+  }
+  function bind(sel) {
+    document.querySelectorAll(sel).forEach(function (b) {
+      b.addEventListener('click', function () { doOp(b.dataset.op); });
+    });
+  }
+  bind('#bar [data-op]');
+  bind('#opsMenu [data-op]');
+  document.getElementById('fabBtn').addEventListener('click', function () {
+    document.getElementById('opsMenu').classList.toggle('show');
+  });
+  document.getElementById('menuClose').addEventListener('click', function () {
+    document.getElementById('opsMenu').classList.remove('show');
+  });
 })();
 </script>
 </body>
