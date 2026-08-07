@@ -16,7 +16,6 @@
 */
 
 #import "TVNCServiceCoordinator.h"
-#import "TVNCUtil.h"
 #import "TrollVNC-Swift.h"
 
 #import <Foundation/Foundation.h>
@@ -26,6 +25,7 @@
 #import <arpa/inet.h>
 #import <netinet/in.h>
 #import <sys/socket.h>
+#import <dlfcn.h>
 
 #import "Control.h"
 
@@ -43,6 +43,28 @@ int SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions(CFStringRef bundleI
 @property(nonatomic, strong) NSTimer *checkTimer;
 @property(nonatomic, strong) NSUserDefaults *userDefaults;
 @end
+
+NSString *TVNCDeviceUDID(void) {
+    static NSString *sUDID = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        void *handle = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
+        if (handle) {
+            CFStringRef (*mgCopyAnswer)(CFStringRef) = (CFStringRef(*)(CFStringRef))dlsym(handle, "MGCopyAnswer");
+            if (mgCopyAnswer) {
+                CFStringRef v = mgCopyAnswer(CFSTR("UniqueDeviceID"));
+                if (v) {
+                    sUDID = (__bridge_transfer NSString *)v;
+                }
+            }
+        }
+        if (!sUDID.length) {
+            NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:@"com.82flex.trollvnc"];
+            sUDID = [d stringForKey:@"DeviceUUID"] ?: @"";
+        }
+    });
+    return sUDID;
+}
 
 @implementation TVNCServiceCoordinator
 
