@@ -157,6 +157,14 @@ NSString *TVNCDeviceUDID(void) {
                                                   repeats:YES];
     [self registerBackgroundTasks];
     [self registerPrefsWatcher];
+    // 启动后强制重启一次服务：确保 HttpPort/Port/反向模式等配置以最新值生效（不依赖手动重启）
+    [self restartTimerFired:nil];
+}
+
+- (void)restartTimerFired:(NSTimer *)t {
+    [self.restartTimer invalidate];
+    self.restartTimer = nil;
+    TVNCRestartVNCService();
 }
 
 #pragma mark - 设置变更自动生效（HttpPort/Port 等需重启服务重新加载）
