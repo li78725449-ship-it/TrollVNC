@@ -28,9 +28,15 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, assign) BOOL hideDismissButton;
 /// 嵌入卡片时：隐藏导航按钮、禁用下拉刷新（默认 NO）
 @property(nonatomic, assign) BOOL embedded;
+/// 模式过滤：YES=只显示反向对端（repeater），NO=只显示直连客户端
+@property(nonatomic, assign) BOOL reverseMode;
 /// 列表变化回调（在线数 / 冻结数）
 @property(nonatomic, copy) void (^onCountChange)(NSInteger onlineCount, NSInteger frozenCount);
+/// 反向连接状态回调（是否存在反向对端）
+@property(nonatomic, copy) void (^onReverseConnectionChange)(BOOL connected);
 
+/// 立即重新拉取列表
+- (void)refreshNow;
 /// 断开全部客户端（供嵌入卡片头部按钮调用）
 - (void)disconnectAllClients;
 /// 冻结（断开 + 加入黑名单并本地记录）

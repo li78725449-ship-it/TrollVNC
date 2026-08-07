@@ -436,6 +436,10 @@ static int TVNCConnect(void) {
     });
 }
 
+- (void)refreshNow {
+    [self refresh];
+}
+
 - (void)disconnectAllClients {
     [self disconnectAll];
 }
@@ -489,6 +493,10 @@ static int TVNCConnect(void) {
         return cell;
     }
 
+    BOOL isRep = [[c objectForKey:@"repeater"] boolValue] || [[c objectForKey:@"repeater"] isEqual:@"1"];
+    if (isRep && host.length == 0) {
+        host = @"反向对端";
+    }
     BOOL vo = [[c objectForKey:@"viewOnly"] boolValue] || [[c objectForKey:@"viewOnly"] isEqual:@"1"];
     double dur = [[c objectForKey:@"durationSec"] doubleValue];
 
@@ -529,13 +537,17 @@ static int TVNCConnect(void) {
         NSArray *cols = [ln componentsSeparatedByString:@"\t"];
         if (cols.count < 5)
             continue;
-        [rows addObject:@{
+        NSMutableDictionary *row = [NSMutableDictionary dictionaryWithDictionary:@{
             @"id" : cols[0],
             @"host" : cols[1],
             @"viewOnly" : cols[2],
             @"connectedAt" : cols[3],
             @"durationSec" : cols[4]
         }];
+        if (cols.count >= 6) {
+            row[@"repeater"] = cols[5];
+        }
+        [rows addObject:row];
     }
     return rows;
 }
@@ -545,10 +557,18 @@ static int TVNCConnect(void) {
 
     NSMutableArray<NSString *> *ids = [NSMutableArray arrayWithCapacity:rows.count];
     NSMutableSet<NSString *> *seenHosts = [NSMutableSet set];
+    NSInteger repeaterCount = 0;
+    NSInteger onlineCount = 0;
     for (NSDictionary *item in rows) {
         NSString *cid = item[@"id"] ?: @"";
         if (!cid.length)
             continue;
+        BOOL isRep = [[item objectForKey:@"repeater"] boolValue] || [[item objectForKey:@"repeater"] isEqual:@"1"];
+        if (self.reverseMode != isRep)
+            continue; // 模式互斥：直连只看非反向对端，反向只看反向对端
+        if (isRep)
+            repeaterCount++;
+        onlineCount++;
         self.clientLookup[cid] = item;
         [ids addObject:cid];
         NSString *host = item[@"host"] ?: @"";
@@ -578,7 +598,10 @@ static int TVNCConnect(void) {
     [self.disconnectItem setEnabled:(ids.count > 0)];
 
     if (self.onCountChange) {
-        self.onCountChange((NSInteger)rows.count, (NSInteger)self.frozenHosts.count);
+        self.onCountChange(onlineCount, (NSInteger)self.frozenHosts.count);
+    }
+    if (self.onReverseConnectionChange) {
+        self.onReverseConnectionChange(self.reverseMode && repeaterCount > 0);
     }
 }
 

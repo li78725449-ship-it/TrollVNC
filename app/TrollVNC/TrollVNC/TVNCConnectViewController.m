@@ -121,6 +121,7 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 @property(nonatomic, strong) UITextField *reverseIntervalField;
 @property(nonatomic, strong) UIButton *reverseDialButton;
 @property(nonatomic, assign) BOOL reverseDialing;
+@property(nonatomic, assign) BOOL reverseConnected;
 
 @end
 
@@ -225,9 +226,11 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 }
 
 - (void)updateStatusPill {
-    BOOL running = [[TVNCServiceCoordinator sharedCoordinator] isServiceRunning];
-    self.statusDotView.backgroundColor = running ? [UIColor systemGreenColor] : [UIColor systemGrayColor];
-    self.statusPillLabel.text = running ? @"已连接" : @"未连接";
+    BOOL reverse = (self.modeSegment.selectedSegmentIndex == 1);
+    BOOL connected = reverse ? self.reverseConnected
+                             : [[TVNCServiceCoordinator sharedCoordinator] isServiceRunning];
+    self.statusDotView.backgroundColor = connected ? [UIColor systemGreenColor] : [UIColor systemGrayColor];
+    self.statusPillLabel.text = connected ? @"已连接" : @"未连接";
 }
 
 #pragma mark - Hero
@@ -240,7 +243,7 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 
     self.nameLabel = [[UILabel alloc] init];
     self.nameLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.nameLabel.font = [UIFont boldSystemFontOfSize:20];
+    self.nameLabel.font = [UIFont boldSystemFontOfSize:21];
     self.nameLabel.textColor = [UIColor whiteColor];
     self.nameLabel.text = [[UIDevice currentDevice] name];
 
@@ -252,28 +255,30 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 
     self.gatewayLabel = [[UILabel alloc] init];
     self.gatewayLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.gatewayLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-    self.gatewayLabel.textColor = [UIColor colorWithWhite:1 alpha:0.92];
-
-    UIStackView *gatewayRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.statusDot, self.gatewayLabel]];
-    gatewayRow.translatesAutoresizingMaskIntoConstraints = NO;
-    gatewayRow.axis = UILayoutConstraintAxisHorizontal;
-    gatewayRow.spacing = 7;
+    self.gatewayLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+    self.gatewayLabel.textColor = [UIColor colorWithWhite:1 alpha:0.94];
+    self.gatewayLabel.numberOfLines = 1;
+    self.gatewayLabel.adjustsFontSizeToFitWidth = YES;
+    self.gatewayLabel.minimumScaleFactor = 0.6;
 
     [card addSubview:self.nameLabel];
-    [card addSubview:gatewayRow];
+    [card addSubview:self.statusDot];
+    [card addSubview:self.gatewayLabel];
 
     [NSLayoutConstraint activateConstraints:@[
-        [card.heightAnchor constraintGreaterThanOrEqualToConstant:120],
-        [self.nameLabel.topAnchor constraintEqualToAnchor:card.topAnchor constant:20],
-        [self.nameLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:20],
-        [self.nameLabel.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-20],
-        [gatewayRow.topAnchor constraintEqualToAnchor:self.nameLabel.bottomAnchor constant:14],
-        [gatewayRow.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:20],
-        [gatewayRow.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-20],
+        [self.nameLabel.topAnchor constraintEqualToAnchor:card.topAnchor constant:22],
+        [self.nameLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:22],
+        [self.nameLabel.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-22],
+
+        [self.statusDot.topAnchor constraintEqualToAnchor:self.nameLabel.bottomAnchor constant:16],
+        [self.statusDot.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:22],
         [self.statusDot.widthAnchor constraintEqualToConstant:8],
         [self.statusDot.heightAnchor constraintEqualToConstant:8],
-        [gatewayRow.bottomAnchor constraintLessThanOrEqualToAnchor:card.bottomAnchor constant:-20],
+        [self.statusDot.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-22],
+
+        [self.gatewayLabel.leadingAnchor constraintEqualToAnchor:self.statusDot.trailingAnchor constant:8],
+        [self.gatewayLabel.centerYAnchor constraintEqualToAnchor:self.statusDot.centerYAnchor],
+        [self.gatewayLabel.trailingAnchor constraintLessThanOrEqualToAnchor:card.trailingAnchor constant:-22],
     ]];
     return card;
 }
@@ -297,10 +302,29 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 }
 
 - (void)modeChanged:(UISegmentedControl *)seg {
-    [self refreshContentCard];
-    if (seg.selectedSegmentIndex == 0) {
+    BOOL reverse = (seg.selectedSegmentIndex == 1);
+    if (!reverse) {
+        // 切回内网直连 = 断开反向连接并重启服务（模式互斥）
+        NSString *mode = [self.defaults stringForKey:@"ReverseMode"];
+        if ([mode isEqualToString:@"viewer"] || [mode isEqualToString:@"repeater"]) {
+            [self.defaults setObject:@"none" forKey:@"ReverseMode"];
+            [self.defaults synchronize];
+            self.reverseDialing = NO;
+            self.reverseConnected = NO;
+            TVNCRestartVNCService();
+        }
+        self.clientsVC.reverseMode = NO;
+        [self.clientsVC refreshNow];
+        [self refreshContentCard];
         [self generateQRAsync];
+    } else {
+        // 切到反向连接：清掉直连视图状态，列表只看反向对端
+        self.clientsVC.reverseMode = YES;
+        [self.clientsVC refreshNow];
+        [self refreshContentCard];
     }
+    [self updateStatusPill];
+    [self updateReverseDialUI];
 }
 
 #pragma mark - 内容卡切换（内网直连 / 反向连接）
@@ -328,7 +352,7 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
     UILabel *title = [self cardTitle:@"反向连接（需监听 VNC）"];
     [card addSubview:title];
 
-    self.reverseSegment = [[UISegmentedControl alloc] initWithItems:@[@"查看端", @"中继器"]];
+    self.reverseSegment = [[UISegmentedControl alloc] initWithItems:@[@"客户端", @"中继器"]];
     self.reverseSegment.translatesAutoresizingMaskIntoConstraints = NO;
     NSString *mode = [self.defaults stringForKey:@"ReverseMode"];
     self.reverseSegment.selectedSegmentIndex = ([mode isEqualToString:@"repeater"]) ? 1 : 0;
@@ -386,19 +410,6 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
     [self.reverseDialButton addTarget:self action:@selector(dialReverse:) forControlEvents:UIControlEventTouchUpInside];
     [card addSubview:self.reverseDialButton];
 
-    // 恢复直连（带边框）
-    UIButton *restore = [UIButton buttonWithType:UIButtonTypeSystem];
-    restore.translatesAutoresizingMaskIntoConstraints = NO;
-    [restore setTitle:@"恢复直连" forState:UIControlStateNormal];
-    restore.titleLabel.font = [UIFont systemFontOfSize:14];
-    [restore setTitleColor:[UIColor secondaryLabelColor] forState:UIControlStateNormal];
-    restore.layer.cornerRadius = 10;
-    restore.layer.borderWidth = 1;
-    restore.layer.borderColor = [UIColor separatorColor].CGColor;
-    [restore setContentEdgeInsets:UIEdgeInsetsMake(8, 30, 8, 30)];
-    [restore addTarget:self action:@selector(restoreDirect:) forControlEvents:UIControlEventTouchUpInside];
-    [card addSubview:restore];
-
     // 提示
     UILabel *hint = [[UILabel alloc] init];
     hint.translatesAutoresizingMaskIntoConstraints = NO;
@@ -421,14 +432,12 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
         [fieldStack.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18],
         [fieldStack.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18],
 
-        [self.reverseDialButton.topAnchor constraintEqualToAnchor:fieldStack.bottomAnchor constant:16],
-        [self.reverseDialButton.centerXAnchor constraintEqualToAnchor:card.centerXAnchor],
-        [self.reverseDialButton.heightAnchor constraintEqualToConstant:44],
+        [self.reverseDialButton.topAnchor constraintEqualToAnchor:fieldStack.bottomAnchor constant:18],
+        [self.reverseDialButton.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18],
+        [self.reverseDialButton.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18],
+        [self.reverseDialButton.heightAnchor constraintEqualToConstant:46],
 
-        [restore.topAnchor constraintEqualToAnchor:self.reverseDialButton.bottomAnchor constant:4],
-        [restore.centerXAnchor constraintEqualToAnchor:card.centerXAnchor],
-
-        [hint.topAnchor constraintEqualToAnchor:restore.bottomAnchor constant:10],
+        [hint.topAnchor constraintEqualToAnchor:self.reverseDialButton.bottomAnchor constant:10],
         [hint.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18],
         [hint.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18],
         [hint.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-14],
@@ -473,15 +482,6 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
     });
 }
 
-- (void)restoreDirect:(UIButton *)sender {
-    [self.defaults setObject:@"none" forKey:@"ReverseMode"];
-    [self.defaults synchronize];
-    self.reverseDialing = NO;
-    TVNCRestartVNCService();
-    [self toast:@"已恢复内网直连"];
-    [self updateReverseDialUI];
-}
-
 - (void)updateReverseDialUI {
     if (!self.reverseDialButton) return;
     if (self.reverseDialing) {
@@ -489,10 +489,7 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
         self.reverseDialButton.enabled = NO;
         return;
     }
-    NSString *mode = [self.defaults stringForKey:@"ReverseMode"];
-    BOOL reverseConfigured = ([mode isEqualToString:@"viewer"] || [mode isEqualToString:@"repeater"]);
-    BOOL running = [[TVNCServiceCoordinator sharedCoordinator] isServiceRunning];
-    if (reverseConfigured && running) {
+    if (self.reverseConnected) {
         [self.reverseDialButton setTitle:@"已连接" forState:UIControlStateNormal];
         self.reverseDialButton.enabled = NO;
         self.reverseDialButton.layer.borderColor = [UIColor systemGrayColor].CGColor;
@@ -612,7 +609,7 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 
     UIButton *disconnectAll = [UIButton buttonWithType:UIButtonTypeSystem];
     disconnectAll.translatesAutoresizingMaskIntoConstraints = NO;
-    [disconnectAll setTitle:@"断开全部" forState:UIControlStateNormal];
+    [disconnectAll setTitle:@"全部断开" forState:UIControlStateNormal];
     disconnectAll.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
     [disconnectAll setTitleColor:[UIColor systemRedColor] forState:UIControlStateNormal];
     [disconnectAll addTarget:self action:@selector(disconnectAllClients) forControlEvents:UIControlEventTouchUpInside];
@@ -637,6 +634,14 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
         if (strongSelf) {
             strongSelf.clientsCountLabel.text =
                 [NSString stringWithFormat:@"在线 %ld · 冻结 %ld", (long)online, (long)frozen];
+        }
+    };
+    clientsVC.onReverseConnectionChange = ^(BOOL connected) {
+        typeof(self) strongSelf = weakSelf;
+        if (strongSelf) {
+            strongSelf.reverseConnected = connected;
+            [strongSelf updateStatusPill];
+            [strongSelf updateReverseDialUI];
         }
     };
     [self addChildViewController:clientsVC];
@@ -669,7 +674,18 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 }
 
 - (void)disconnectAllClients {
-    [self.clientsVC disconnectAllClients];
+    if (self.modeSegment.selectedSegmentIndex == 1) {
+        // 反向模式：全部断开 = 复位反向连接（写 none + 重启），同步清理右上角/拨号按钮/列表
+        [self.defaults setObject:@"none" forKey:@"ReverseMode"];
+        [self.defaults synchronize];
+        self.reverseDialing = NO;
+        self.reverseConnected = NO;
+        TVNCRestartVNCService();
+        [self updateStatusPill];
+        [self updateReverseDialUI];
+    } else {
+        [self.clientsVC disconnectAllClients];
+    }
 }
 
 #pragma mark - U3 操作

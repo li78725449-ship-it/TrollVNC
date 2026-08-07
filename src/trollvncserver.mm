@@ -3545,7 +3545,7 @@ static void tvStopControlSocket(void) {
 }
 
 static void tvStartControlSocketIfNeeded(void) {
-    if (!gTvCtlPort || isRepeaterEnabled())
+    if (!gTvCtlPort)
         return;
     if (gTvCtlAcceptSource)
         return; // already started
@@ -3761,12 +3761,14 @@ static NSArray *tvSnapshotClients(void) {
             NSNumber *viewOnly = info[@"viewOnly"] ?: @(NO);
             NSDate *connectAt = info[@"connectAt"];
 
+            NSNumber *repeater = info[@"repeater"] ?: @(NO);
             double t0 = connectAt ? [connectAt timeIntervalSince1970] : [now timeIntervalSince1970];
             double dur = [[NSNumber numberWithDouble:([now timeIntervalSince1970] - t0)] doubleValue];
             [arr addObject:@{
                 @"id" : cid,
                 @"host" : host,
                 @"viewOnly" : viewOnly,
+                @"repeater" : repeater,
                 @"connectedAt" : @(t0),
                 @"durationSec" : @(dur)
             }];
@@ -3781,14 +3783,15 @@ static NSData *tvCtlTSVForList(void) {
     NSMutableString *out = [NSMutableString string];
 
     // Header
-    [out appendString:@"id\thost\tviewOnly\tconnectedAt\tdurationSec\n"];
+    [out appendString:@"id\thost\tviewOnly\tconnectedAt\tdurationSec\trepeater\n"];
     for (NSDictionary *c in clients) {
         NSString *cid = c[@"id"] ?: @"";
         NSString *host = c[@"host"] ?: @"";
         BOOL vo = [c[@"viewOnly"] boolValue];
+        BOOL rep = [c[@"repeater"] boolValue];
         double t0 = [c[@"connectedAt"] doubleValue];
         double dur = [c[@"durationSec"] doubleValue];
-        [out appendFormat:@"%@\t%@\t%@\t%.0f\t%.3f\n", cid, host, vo ? @"1" : @"0", t0, dur];
+        [out appendFormat:@"%@\t%@\t%@\t%.0f\t%.3f\t%@\n", cid, host, vo ? @"1" : @"0", t0, dur, rep ? @"1" : @"0"];
     }
 
     return [out dataUsingEncoding:NSUTF8StringEncoding];
@@ -4848,6 +4851,19 @@ static void initializeAndRunRfbServer(void) {
         TVClientState *st = tvGetClientState(sClient);
         if (st) {
             st->isRepeaterClient = YES;
+            // 同步标记到客户端快照，供 App 区分“反向对端 / 直连客户端”
+            if (st->clientId8[0] != '\0') {
+                NSString *repCid = [NSString stringWithUTF8String:st->clientId8];
+                if (repCid.length && gClientStates) {
+                    @synchronized(gClientStates) {
+                        if (gClientStates[repCid]) {
+                            NSMutableDictionary *repEntry = [gClientStates[repCid] mutableCopy];
+                            repEntry[@"repeater"] = @YES;
+                            gClientStates[repCid] = [repEntry copy];
+                        }
+                    }
+                }
+            }
         }
 
         TVLog(@"Reverse connection established to %s", gRepeaterHost);
