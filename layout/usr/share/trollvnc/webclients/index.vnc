@@ -1,4 +1,4 @@
-<!-- index.vnc - TrollVNC 自动连接响应式页面（内网自用版）
+﻿<!-- index.vnc - TrollVNC 自动连接响应式页面（内网自用版）
      $PORT 由 LibVNCServer 替换为 VNC 端口 -->
 <!DOCTYPE html>
 <html lang="zh-CN">

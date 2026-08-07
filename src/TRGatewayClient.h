@@ -1,8 +1,8 @@
 /*
-  TRGatewayClient - 内网群控网关注册/心跳客户端
-  功能：读取预置网关配置(GatewayURL / GatewayHost+GatewayPort / GatewayToken)，
-       生成并持久化设备 UUID，连接网关 /ws/register，定时 hello，断线退避重连。
-  iOS 13+ 使用 NSURLSessionWebSocketTask。
+  TRGatewayClient - 内网群控网关注册/心跳客户端（BSD socket / TCP JSON 行协议）
+  功能：读取预置网关配置(GatewayHost+GatewayPort / GatewayToken)，生成并持久化设备 UUID，
+       连接网关注册端口(默认 18081)，上报能力清单（capabilities/configs/screen/httpPort，
+       宪法 7.3），定时 hello，断线退避重连；设置变更时重发 register 保持清单新鲜。
 */
 #ifndef TRGatewayClient_h
 #define TRGatewayClient_h
@@ -11,7 +11,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface TRGatewayClient : NSObject <NSURLSessionWebSocketDelegate>
+@interface TRGatewayClient : NSObject
 
 + (instancetype)sharedClient;
 
