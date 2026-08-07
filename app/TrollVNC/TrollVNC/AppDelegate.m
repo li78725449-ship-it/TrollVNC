@@ -19,9 +19,6 @@
 #import "TVNCHotspotManager.h"
 #import "TVNCServiceCoordinator.h"
 
-#ifdef THEBOOTSTRAP
-#import "GitHubReleaseUpdater.h"
-#endif
 
 @implementation AppDelegate
 
@@ -30,19 +27,6 @@
     [[TVNCServiceCoordinator sharedCoordinator] registerServiceMonitor];
     [[TVNCHotspotManager sharedManager] registerWithName:@"TrollVNC"];
 
-#ifdef THEBOOTSTRAP
-    // Initialize Auto Updater
-    GHUpdateStrategy *updateStrategy = [[GHUpdateStrategy alloc] init];
-    [updateStrategy setRepoFullName:@"OwnGoalStudio/TrollVNC"];
-
-    GitHubReleaseUpdater *updater = [GitHubReleaseUpdater shared];
-#if TARGET_IPHONE_SIMULATOR
-    [updater configureWithStrategy:updateStrategy];
-#else
-    [updater configureWithStrategy:updateStrategy currentVersion:@PACKAGE_VERSION];
-#endif
-    [updater start];
-#endif
 
     return YES;
 }

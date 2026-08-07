@@ -1,45 +1,108 @@
-<!-- index.vnc - VNC viewer template page.  On any file ending in .vnc,
-     the HTTP server embedded in LibVNCServer will substitute the
-     following variables when preceded by a dollar: USER, DESKTOP, DISPLAY,
-     APPLETWIDTH, APPLETHEIGHT, WIDTH, HEIGHT, PORT, PARAMS.  Use two dollar
-     signs ($$) to get a dollar sign in the generated html. -->
+﻿<!-- index.vnc - TrollVNC 自动连接响应式页面（内网自用版）
+     $PORT 由 LibVNCServer 替换为 VNC 端口 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>TrollVNC</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  #screen { flex: 1; position: relative; min-height: 0; background: #000; }
+  #screen canvas { position: absolute; left: 0; top: 0; }
+  #hint {
+    position: absolute; left: 8px; top: 8px; z-index: 5;
+    color: #bbb; background: rgba(0,0,0,.6); padding: 4px 10px;
+    border-radius: 12px; font: 12px system-ui, sans-serif; pointer-events: none;
+    max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #bar {
+    display: flex; gap: clamp(4px, 1.5vw, 10px); justify-content: center;
+    padding: max(6px, env(safe-area-inset-bottom)) 8px;
+    background: #141414; flex-wrap: nowrap; overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #bar button {
+    flex: 0 0 auto;
+    min-width: clamp(44px, 16vw, 72px);
+    min-height: 44px;
+    border: 1px solid #333; background: #222; color: #eee;
+    border-radius: 10px; font: 500 13px system-ui, sans-serif;
+    padding: 4px 10px;
+  }
+  #bar button:active { background: #3a3a3a; }
+  @media (min-width: 900px) {
+    body { flex-direction: row; }
+    #bar { flex-direction: column; justify-content: flex-start; padding: 8px; }
+    #bar button { min-width: 64px; }
+  }
+</style>
+</head>
+<body>
+<div id="screen"><div id="hint">连接中…</div></div>
+<div id="bar">
+  <button id="bHome">Home</button>
+  <button id="bPower">电源</button>
+  <button id="bVolDn">Vol−</button>
+  <button id="bVolUp">Vol+</button>
+  <button id="bFit">适配</button>
+  <button id="bFull">全屏</button>
+  <button id="bDisc">断开</button>
+</div>
+<script type="module">
+import RFB from './novnc/core/rfb.js';
+(function () {
+  var host = location.hostname;
+  var port = $PORT;
+  var wsProto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  var url = wsProto + host + ':' + port + '/websockify';
 
-<HTML>
-<head> 
-<TITLE>
-$USER's $DESKTOP desktop ($DISPLAY)
-</TITLE>
-</head> 
-<br/>
-This page shows how to connect to a VNC server with a web browser. The buttons below
-fire up an instance of the <a href="https://novnc.com/">noVNC</a> HTML5 viewer.
-<br/>
-<br/>
-<script language="JavaScript">
-    <!--
-    function start_novnc(do_encrypt){
-	var host = document.location.hostname;
-	// If there are at least two colons in there, it is likely an IPv6 address. Check for square brackets and add them if missing.
-	if(host.search(/^.*:.*:.*$/) != -1) {
-	   if(host.charAt(0) != "[")
-	      host = "[" + host;
-	   if(host.charAt(host.length-1) != "]")
-	      host = host + "]";
-	}
-	open("novnc/vnc.html?autoconnect=true&host=" + host + "&port=$PORT&encrypt=" + (do_encrypt ? "1" : "0"));
-    }
-    -->
+  var screen = document.getElementById('screen');
+  var hint = document.getElementById('hint');
+  var rfb = new RFB(screen, url, {});
+  rfb.scaleViewport = true;
+  rfb.resizeSession = false;
+  rfb.showDotCursor = true;
+
+  rfb.addEventListener('connect', function () {
+    hint.textContent = '已连接 ' + host + ':' + port;
+  });
+  rfb.addEventListener('disconnect', function () {
+    hint.textContent = '已断开（点「断开」可重连）';
+  });
+  rfb.addEventListener('credentialsrequired', function () {
+    var p = window.prompt('请输入 VNC 密码：');
+    if (p) rfb.sendCredentials({ password: p });
+  });
+
+  function tapKey(ks, code) {
+    try { rfb.sendKey(ks, code, true); } catch (e) { return; }
+    setTimeout(function () { try { rfb.sendKey(ks, code, false); } catch (e) {} }, 60);
+  }
+  // 直接注入 RFB PointerEvent（type=5）：中键=电源（TrollVNC 映射）
+  function pointer(mask) {
+    try {
+      var b = new Uint8Array(6);
+      b[0] = 5; b[1] = mask; b[2] = 0; b[3] = 1; b[4] = 0; b[5] = 1;
+      rfb._sock.send(b.buffer);
+      if (mask !== 0) setTimeout(function () { pointer(0); }, 80);
+    } catch (e) {}
+  }
+
+  document.getElementById('bHome').onclick = function () { tapKey(0xff50, 'Home'); };
+  document.getElementById('bPower').onclick = function () { pointer(2); };
+  document.getElementById('bVolDn').onclick = function () { tapKey(0x1008ff11, 'AudioVolumeDown'); };
+  document.getElementById('bVolUp').onclick = function () { tapKey(0x1008ff13, 'AudioVolumeUp'); };
+  document.getElementById('bFit').onclick = function () { rfb.scaleViewport = true; };
+  document.getElementById('bFull').onclick = function () {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen();
+  };
+  document.getElementById('bDisc').onclick = function () {
+    try { rfb.disconnect(); } catch (e) {}
+  };
+})();
 </script>
-<form name="novnc_button_form">
-  <input type="button" name="novnc_button" value="Click here to connect using noVNC" onClick='start_novnc(false)'>
-</form>
-<form name="novnc_button_form">
-  <input type="button" name="novnc_button" value="Click here to connect using noVNC using an encrypted connection" onClick='start_novnc(true)'>
-</form>
-
-
-<br/>
-<br/>
-<br/>
-<A href="https://libvnc.github.io/">LibVNCServer/LibVNCClient Homepage</A>
-</HTML>
+</body>
+</html>

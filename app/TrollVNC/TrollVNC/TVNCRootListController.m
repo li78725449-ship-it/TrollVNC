@@ -21,6 +21,7 @@
 #import <SystemConfiguration/SystemConfiguration.h>
 #import <UIKit/UIKit.h>
 #import <arpa/inet.h>
+#import <netdb.h>
 #import <dlfcn.h>
 #import <ifaddrs.h>
 #import <net/if.h>
@@ -151,7 +152,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     return inet_pton(AF_INET6, addrBuf, &v6) == 1;
 }
 
-@interface TVNCRootListController ()
+@interface TVNCRootListController () <NSNetServiceBrowserDelegate, NSNetServiceDelegate>
 
 @property(nonatomic, strong) nw_path_monitor_t monitor;
 
@@ -166,6 +167,10 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 @property(nonatomic, strong) PSSpecifier *exportCertSpecifier;
 
 @property(nonatomic, copy) NSString *defaultFooterText;
+@property(nonatomic, strong) NSNetServiceBrowser *gatewayBrowser;
+@property(nonatomic, strong) NSMutableArray<NSNetService *> *gatewayServices;
+@property(nonatomic, assign) BOOL gatewaySearchShown;
+
 
 @end
 
@@ -901,4 +906,107 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     return nil;
 }
 
+
+#pragma mark - Gateway Search (internal farm)
+
+- (void)searchGateway {
+    if (self.gatewayBrowser) {
+        [self.gatewayBrowser stop];
+        self.gatewayBrowser = nil;
+    }
+    self.gatewayServices = [NSMutableArray array];
+    self.gatewaySearchShown = NO;
+    self.gatewayBrowser = [[NSNetServiceBrowser alloc] init];
+    self.gatewayBrowser.delegate = self;
+    [self.gatewayBrowser searchForServicesOfType:@"_trollvnc-farm._tcp" inDomain:@"local."];
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"搜索网关"
+                                                                  message:@"正在局域网内查找 TrollVNC 网关…"
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
+        __strong typeof(weakSelf) self = weakSelf;
+        [self.gatewayBrowser stop];
+        self.gatewayBrowser = nil;
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) self = weakSelf;
+        [self presentFoundGateways];
+    });
+}
+
+- (void)netServiceBrowser:(NSNetServiceBrowser *)browser didFindService:(NSNetService *)service moreComing:(BOOL)moreComing {
+    [self.gatewayServices addObject:service];
+    service.delegate = self;
+    [service resolveWithTimeout:3.0];
+}
+
+- (void)presentFoundGateways {
+    if (!self.gatewayBrowser || self.gatewaySearchShown) return;
+    self.gatewaySearchShown = YES;
+    [self.gatewayBrowser stop];
+    self.gatewayBrowser = nil;
+
+    [self dismissViewControllerAnimated:YES completion:nil];
+
+    NSMutableArray<NSNetService *> *ready = [NSMutableArray array];
+    for (NSNetService *svc in self.gatewayServices) {
+        if ([self ipAddressOfService:svc]) [ready addObject:svc];
+    }
+
+    if (!ready.count) {
+        [self showGatewayMessage:@"未找到网关，请检查软路由是否运行 trollvnc-farm"];
+        return;
+    }
+
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"选择网关"
+                                                                  message:nil
+                                                           preferredStyle:UIAlertControllerStyleActionSheet];
+    __weak typeof(self) weakSelf = self;
+    for (NSNetService *svc in ready) {
+        NSString *host = [self ipAddressOfService:svc];
+        NSInteger port = svc.port;
+        NSString *title = [NSString stringWithFormat:@"%@ (%@:%ld)", svc.name, host, (long)port];
+        [sheet addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            __strong typeof(weakSelf) self = weakSelf;
+            [self saveGateway:host port:port];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    if (sheet.popoverPresentationController) {
+        sheet.popoverPresentationController.sourceView = self.view;
+        sheet.popoverPresentationController.sourceRect = self.view.bounds;
+    }
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)saveGateway:(NSString *)host port:(NSInteger)port {
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:@"com.82flex.trollvnc"];
+    [defaults setObject:host forKey:@"GatewayHost"];
+    [defaults setInteger:port forKey:@"GatewayPort"];
+    [defaults synchronize];
+    [self showGatewayMessage:[NSString stringWithFormat:@"已设置网关 %@:%ld", host, (long)port]];
+    [self reloadSpecifiers];
+}
+
+- (NSString *)ipAddressOfService:(NSNetService *)service {
+    for (NSData *address in service.addresses) {
+        const struct sockaddr *sa = (const struct sockaddr *)address.bytes;
+        if (sa->sa_family != AF_INET) continue;
+        char host[NI_MAXHOST];
+        if (getnameinfo(sa, (socklen_t)address.length, host, sizeof(host), NULL, 0, NI_NUMERICHOST) == 0) {
+            NSString *ip = [NSString stringWithUTF8String:host];
+            if (![ip hasPrefix:@"169.254."]) return ip;
+        }
+    }
+    return nil;
+}
+
+- (void)showGatewayMessage:(NSString *)message {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"网关" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
 @end
