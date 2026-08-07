@@ -100,7 +100,27 @@ import { DEFAULT_CAPS, CAP_META } from './caps.js';
   rfb.resizeSession = false;
   rfb.showDotCursor = true;
 
-  rfb.addEventListener('connect', function () { hint.textContent = '已连接 ' + host + ':' + port + '（等待画面…）'; });
+  rfb.addEventListener('connect', function () {
+    hint.textContent = '已连接 ' + host + ':' + port + '（等待首帧…）';
+    // 检测是否真的收到画面帧（区分“连上但黑帧”与“连不上”）
+    var gotFrame = false;
+    function fbSize() {
+      var d = rfb._display;
+      if (!d) return 0;
+      return d._fbWidth || d._fbHeight || (d.get_width ? d.get_width() : 0) || (d.get_height ? d.get_height() : 0);
+    }
+    var fc = setInterval(function () {
+      if (fbSize() > 0) {
+        gotFrame = true;
+        hint.textContent = '已连接 · 画面接收中';
+        clearInterval(fc);
+      }
+    }, 800);
+    setTimeout(function () {
+      clearInterval(fc);
+      if (!gotFrame) hint.textContent = '已连接但未收到画面（锁屏黑帧 / 抓屏异常 / 编码不支持）';
+    }, 5000);
+  });
   rfb.addEventListener('disconnect', function (e) {
     var msg = (e && e.detail && e.detail.message) ? '：' + e.detail.message : '';
     hint.textContent = '已断开' + msg + '（目标 ' + url + '）';
