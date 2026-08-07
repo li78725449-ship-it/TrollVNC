@@ -17,9 +17,21 @@
 
 #import <Foundation/Foundation.h>
 #import <sys/sysctl.h>
-#import <dlfcn.h>
 
 #define TVNC_NOTIFY_PREFS_CHANGED "com.82flex.trollvnc.prefs-changed"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+// 手动声明 dlopen/dlsym（避免在头文件中 import <dlfcn.h> 触发 clang modules 报错）
+extern void *dlopen(const char *path, int mode);
+extern void *dlsym(void *handle, const char *symbol);
+#ifdef __cplusplus
+}
+#endif
+#ifndef RTLD_LAZY
+#define RTLD_LAZY 1
+#endif
 
 // 设备唯一标识：优先硬件 UDID（MobileGestalt 私有 API，巨魔/越狱环境可用），
 // 拿不到时回退应用级注册 UUID（DeviceUUID）
