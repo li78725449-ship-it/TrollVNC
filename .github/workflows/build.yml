@@ -146,11 +146,7 @@ jobs:
       - name: Build package (${{ matrix.scheme }})
         run: |
           source devkit/${{ matrix.scheme }}.sh
-          if [ "${{ matrix.scheme }}" == "bootstrap" ]; then
-            FINALPACKAGE=1 gmake TARGET_XCPRETTY=cat clean package
-          else
-            FINALPACKAGE=1 gmake clean package
-          fi
+          FINALPACKAGE=1 gmake clean package
 
       - name: Prepare artifacts
         run: |

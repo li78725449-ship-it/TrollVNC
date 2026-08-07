@@ -233,8 +233,7 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;
     self.emptyLabel.font = [UIFont systemFontOfSize:14];
     self.emptyLabel.textColor = [UIColor secondaryLabelColor];
-    self.emptyLabel.text = @"暂无设备
-点右上角刷新，从网关拉取设备目录";
+    self.emptyLabel.text = @"暂无设备\n点右上角刷新，从网关拉取设备目录";
     [self.view addSubview:self.emptyLabel];
 
     [NSLayoutConstraint activateConstraints:@[
@@ -309,8 +308,7 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
     [self.collectionView.refreshControl endRefreshing];
     NSString *host = [self.defaults stringForKey:@"GatewayHost"];
     if (!host.length) {
-        self.emptyLabel.text = @"未配置网关
-请先在 设置 → 网关 填写网关地址";
+        self.emptyLabel.text = @"未配置网关\n请先在 设置 → 网关 填写网关地址";
         [self applyFilter];
         return;
     }
@@ -343,10 +341,8 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
 - (void)handleDevices:(NSArray *)list error:(NSError *)err {
     [self.collectionView.refreshControl endRefreshing];
     if (![list isKindOfClass:[NSArray class]]) {
-        self.emptyLabel.text = err ? [NSString stringWithFormat:@"拉取设备目录失败
-%@", err.localizedDescription]
-                                   : @"网关返回异常
-请检查网关是否运行";
+        self.emptyLabel.text = err ? [NSString stringWithFormat:@"拉取设备目录失败\n%@", err.localizedDescription]
+                                   : @"网关返回异常\n请检查网关是否运行";
     } else {
         [self.devices removeAllObjects];
         for (NSDictionary *d in list) {
@@ -356,8 +352,7 @@ static NSString *const kLayoutKey = @"TVNCControllerLayoutIndex"; // 0-11: 横�
             }
         }
         if (!self.devices.count) {
-            self.emptyLabel.text = @"暂无设备
-（仅显示已注册到网关的设备）";
+            self.emptyLabel.text = @"暂无设备\n（仅显示已注册到网关的设备）";
         }
     }
     [self applyFilter];
