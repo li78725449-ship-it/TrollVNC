@@ -101,6 +101,7 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
 
 @property(nonatomic, strong) UIView *statusDot;              // Hero 网关绿点
 @property(nonatomic, strong) UILabel *gatewayLabel;          // Hero 网关 ip:端口
+@property(nonatomic, strong) UILabel *udidLabel;             // Hero 设备标识（UDID）
 @property(nonatomic, strong) UILabel *nameLabel;             // Hero 设备名
 @property(nonatomic, strong) UISegmentedControl *modeSegment;
 @property(nonatomic, strong) UIView *contentCard;
@@ -253,6 +254,16 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
     self.statusDot.layer.cornerRadius = 4;
     self.statusDot.backgroundColor = [UIColor systemGreenColor];
 
+    // 第 2 行：设备标识（UDID，首次启动自动获取，回退注册 UUID）
+    self.udidLabel = [[UILabel alloc] init];
+    self.udidLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.udidLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
+    self.udidLabel.textColor = [UIColor colorWithWhite:1 alpha:0.82];
+    self.udidLabel.numberOfLines = 1;
+    self.udidLabel.adjustsFontSizeToFitWidth = YES;
+    self.udidLabel.minimumScaleFactor = 0.5;
+    self.udidLabel.text = TVNCDeviceUDID() ?: @"";
+
     self.gatewayLabel = [[UILabel alloc] init];
     self.gatewayLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.gatewayLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
@@ -262,6 +273,7 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
     self.gatewayLabel.minimumScaleFactor = 0.6;
 
     [card addSubview:self.nameLabel];
+    [card addSubview:self.udidLabel];
     [card addSubview:self.statusDot];
     [card addSubview:self.gatewayLabel];
 
@@ -270,7 +282,11 @@ static UIImage *TVNCQRCodeImage(NSString *content) {
         [self.nameLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:22],
         [self.nameLabel.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-22],
 
-        [self.statusDot.topAnchor constraintEqualToAnchor:self.nameLabel.bottomAnchor constant:16],
+        [self.udidLabel.topAnchor constraintEqualToAnchor:self.nameLabel.bottomAnchor constant:6],
+        [self.udidLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:22],
+        [self.udidLabel.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-22],
+
+        [self.statusDot.topAnchor constraintEqualToAnchor:self.udidLabel.bottomAnchor constant:14],
         [self.statusDot.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:22],
         [self.statusDot.widthAnchor constraintEqualToConstant:8],
         [self.statusDot.heightAnchor constraintEqualToConstant:8],

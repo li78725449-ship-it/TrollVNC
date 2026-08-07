@@ -16,6 +16,7 @@
 */
 
 #import "TVNCServiceCoordinator.h"
+#import "TVNCUtil.h"
 #import "TrollVNC-Swift.h"
 
 #import <Foundation/Foundation.h>
@@ -99,6 +100,15 @@ int SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions(CFStringRef bundleI
     if (realDeviceName.length) {
         [_userDefaults setObject:realDeviceName forKey:@"DesktopName"];
         [_userDefaults synchronize];
+    }
+
+    // 设备唯一标识：首次启动用硬件 UDID 作为设备身份（注册/去重/展示一致）
+    if (![_userDefaults stringForKey:@"DeviceUUID"].length) {
+        NSString *udid = TVNCDeviceUDID();
+        if (udid.length) {
+            [_userDefaults setObject:udid forKey:@"DeviceUUID"];
+            [_userDefaults synchronize];
+        }
     }
 
     NSString *presetPath = [prefsBundle pathForResource:@"Managed" ofType:@"plist"];

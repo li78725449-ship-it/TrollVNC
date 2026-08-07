@@ -161,22 +161,20 @@
             },
         ],
     };
-    NSDictionary *about = @{
-        @"title" : @"关于与诊断",
-        @"subtitle" : @"版本 · 日志 · 重置",
+    NSDictionary *general = @{
+        @"title" : @"通用",
+        @"subtitle" : @"日志 · 重置",
         @"sections" : @[
             @{
-                @"title" : @"关于与诊断",
+                @"title" : @"通用",
                 @"rows" : @[
-                    @{@"type" : @"info", @"label" : @"版本", @"staticValue" : [TVNCSettingsViewController appVersion]},
-                    @{@"type" : @"info", @"label" : @"设备标识", @"staticValue" : [TVNCSettingsViewController deviceIdShort]},
                     @{@"type" : @"button", @"label" : @"查看日志", @"action" : @"viewLogs"},
                     @{@"type" : @"button", @"label" : @"重置默认设置", @"action" : @"resetDefaults"},
                 ],
             },
         ],
     };
-    return @[ gateway, direct, security, display, input, notify, advanced, about ];
+    return @[ gateway, direct, security, display, input, notify, advanced, general ];
 }
 
 + (NSString *)appVersion {
@@ -185,13 +183,6 @@
     NSString *b = info[@"CFBundleVersion"];
     if (v.length && b.length) return [NSString stringWithFormat:@"%@ (%@)", v, b];
     return v.length ? v : (b.length ? b : @"—");
-}
-
-+ (NSString *)deviceIdShort {
-    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:@"com.82flex.trollvnc"];
-    NSString *uuid = [d stringForKey:@"DeviceUUID"];
-    if (uuid.length >= 8) return [NSString stringWithFormat:@"%@…", [uuid substringToIndex:8]];
-    return uuid.length ? uuid : @"未生成";
 }
 
 #pragma mark - 表格
@@ -213,7 +204,7 @@
     NSDictionary *page = self.pages[ip.row];
     cell.textLabel.text = page[@"title"];
     cell.detailTextLabel.text = page[@"subtitle"];
-    NSArray<NSString *> *icons = @[ @"network", @"wifi", @"lock.shield", @"display", @"keyboard", @"bell.badge", @"wrench.and.screwdriver", @"info.circle" ];
+    NSArray<NSString *> *icons = @[ @"network", @"wifi", @"lock.shield", @"display", @"keyboard", @"bell.badge", @"wrench.and.screwdriver", @"list.bullet.rectangle" ];
     if (ip.row < icons.count) {
         cell.imageView.image = [UIImage systemImageNamed:icons[ip.row]];
         cell.imageView.tintColor = [UIColor systemBlueColor];
