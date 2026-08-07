@@ -16,11 +16,11 @@
 */
 
 #import "TVNCServiceCoordinator.h"
-#import "TVNCUtil.h"
 #import "TrollVNC-Swift.h"
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import "TVNCUtil.h"
 #import <MobileCoreServices/LSApplicationProxy.h>
 #import <BackgroundTasks/BackgroundTasks.h>
 #import <arpa/inet.h>
